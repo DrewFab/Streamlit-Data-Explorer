@@ -7,7 +7,17 @@ from views.z_agents import z_agents_view
 from views.agents import agents_view
 from views.transactions import transactions_view
 
-# Initialize session state keys if not already set
+# Initialize session state keys used in transactions_view
+if 'transactions_offset' not in st.session_state:
+    st.session_state['transactions_offset'] = 0
+if 'filtered_transactions_data' not in st.session_state:
+    st.session_state['filtered_transactions_data'] = pd.DataFrame()
+if 'selected_states' not in st.session_state:
+    st.session_state['selected_states'] = []
+if 'total_matching_rows' not in st.session_state:
+    st.session_state['total_matching_rows'] = 0
+
+# Initialize session state keys for navigation
 session_defaults = {
     "username": "",
     "password": "",
@@ -20,7 +30,13 @@ for key, default in session_defaults.items():
 
 
 def render_sidebar():
-    st.image("assets/logo.png", width=120)
+    cols = st.columns([1, 3])
+    with cols[0]:
+        st.image("assets/logo.png", width=60)
+    with cols[1]:
+        if is_authenticated() and st.button("Logout", key="logout_button", use_container_width=True):
+            logout()
+
     st.markdown("# Data Explorer")
 
     # If not authenticated, show the login form on the sidebar
@@ -29,11 +45,8 @@ def render_sidebar():
     else:
         # Display navigation options when logged in
         options = ["Teams", "Agents", "Transactions"]
-        current_option = st.session_state.selected_table
-        index = options.index(current_option) if current_option in options else 0
-        st.session_state.selected_table = st.radio("Table", options=options, index=index)
-        if st.button("Logout"):
-            logout()
+        st.session_state.selected_table = st.selectbox("Table", options=options, index=0) # Set index to 0 for "Teams"
+        st.markdown("---") # Spacer before filters
 
 
 def render_main():

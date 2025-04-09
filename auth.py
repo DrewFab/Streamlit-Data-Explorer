@@ -1,23 +1,25 @@
 import streamlit as st
 import psycopg2
+import os
+from dotenv import load_dotenv
 
-DB_HOST = "scout-database.ca51kangyonq.us-east-1.rds.amazonaws.com"
-DB_PORT = "5432"
-DB_NAME = "postgres"
+load_dotenv()  # Load environment variables from .env file (for local testing)
+
+DB_HOST = os.getenv("DB_HOST")
+DB_PORT = os.getenv("DB_PORT")
+DB_NAME = os.getenv("DB_NAME")
 
 
 def login():
-    # Ensure keys exist in session state
-    if "authenticated" not in st.session_state:
-        st.session_state.authenticated = False
-    if "username" not in st.session_state:
-        st.session_state.username = ""
-    if "password" not in st.session_state:
-        st.session_state.password = ""
+    # Initialize session state keys if they don't exist
+    st.session_state.setdefault("authenticated", False)
+    st.session_state.setdefault("username", "")
+    st.session_state.setdefault("password", "")
+    st.session_state.setdefault("db_credentials", {})
 
     if not st.session_state.authenticated:
-        st.text_input("Username", key="username")
-        st.text_input("Password", type="password", key="password")
+        st.session_state.username = st.text_input("Username")
+        st.session_state.password = st.text_input("Password", type="password")
         if st.button("Login"):
             try:
                 conn = psycopg2.connect(
@@ -29,7 +31,6 @@ def login():
                 )
                 conn.close()
                 st.session_state.authenticated = True
-                # Store credentials in a dedicated key for later use if needed
                 st.session_state.db_credentials = {
                     "username": st.session_state.username,
                     "password": st.session_state.password
@@ -37,7 +38,7 @@ def login():
                 st.success("Logged in successfully")
                 st.rerun()
             except Exception as e:
-                st.error("Login failed: " + str(e))
+                st.error(f"Login failed: {e}")
 
 
 def logout():
@@ -49,3 +50,7 @@ def logout():
 
 def is_authenticated():
     return st.session_state.get("authenticated", False)
+
+# Optional: Function to get database credentials if needed elsewhere
+def get_db_credentials():
+    return st.session_state.get("db_credentials", {})
