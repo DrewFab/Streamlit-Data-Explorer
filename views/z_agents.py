@@ -1,127 +1,394 @@
 import streamlit as st
-from db import run_query
-from filters import apply_multiselect_filter
+from db import run_query  # Assuming db.py contains your run_query function
 import pandas as pd
+import numpy as np  # Import numpy for NaN checking
 
-def load_data():
-    if not st.session_state.authenticated:
-        raise ValueError("You must be logged in to view this data.")
+CACHE_LIMIT = 5000  # Number of rows per page
 
-    query = """
-    SELECT "Name", "Team", "Team_role", "Org", "Street", "City", "State", "Zip", "Office",
-           "Phone", "Cell", "Email", "Website", "Facebook", "Linkedin",
-           "sales_lastyear"::bigint AS "Sales # (12 Mo.) Raw",
-           (CAST("sales_lastyear" AS numeric) * CAST("averageValueThreeYear" AS numeric))::bigint AS "Sales $ (12 Mo.) Raw"
-    FROM "z_agents"
-    WHERE "Team" IS NOT NULL AND "Team" <> ''
-    LIMIT 1000;
+# --- Database Column Names (Verify these match your actual schema!) ---
+DB_COL_SALES_LASTYEAR = '"sales_lastyear"'
+DB_COL_AVG_VALUE = '"averageValueThreeYear"'
+DB_COL_TEAM = '"Team"'
+DB_COL_TEAM_ROLE = '"Team_role"'
+DB_COL_STATE = '"State"'
+DB_TABLE_AGENTS = '"z_agents"'
+
+# --- DataFrame Column Names (Expected names AFTER loading from DB) ---
+DF_COL_SALES_LASTYEAR = 'sales_lastyear'
+DF_COL_SALES_VALUE_CALCULATED = 'Sales $ (12 Mo.)'
+DF_COL_AVG_VALUE_FROM_DB = 'averageValueThreeYear'
+
+# --- Display Column Names (How you want them to appear in the UI) ---
+DISPLAY_COL_SALES_NUMBER = 'Sales # (12 Mo.)'
+DISPLAY_COL_SALES_VALUE = 'Sales $ (12 Mo.)'
+
+# --- Slider Configuration (ADJUST THESE BASED ON YOUR DATA!) ---
+SLIDER_SALES_NUM_MIN = 0
+SLIDER_SALES_NUM_MAX = 100  # Use 100 for the slider, will display "99+"
+SLIDER_SALES_NUM_STEP = 1
+SLIDER_SALES_VAL_MIN = 0
+SLIDER_SALES_VAL_MAX = 100_000_000  # 100M
+SLIDER_SALES_VAL_STEP = 1_000_000
+SLIDER_SALES_VAL_FORMAT = "$%d"
+
+# Helper function for safe casting in SQL WHERE clauses
+def sql_safe_cast(db_column_name, cast_type="bigint"):
+    """Generates SQL fragment for safe casting, handling non-numeric chars and empty strings."""
+    cleaned_col = f"NULLIF(REGEXP_REPLACE({db_column_name}::text, '[^0-9.]', '', 'g'), '')"
+    return f"CAST({cleaned_col} AS {cast_type})"
+
+# --- Updated Data Functions ---
+def get_total_row_count(states=None, team_roles=None, active_teams=False,
+                        sales_number_range=None, sales_value_range=None):
+    """Calculates the total number of rows matching ALL filters, using ranges."""
+    if not st.session_state.get('authenticated', False):
+        st.error("Authentication required.")
+        return 0
+
+    where_clauses = [f"{DB_COL_TEAM} IS NOT NULL", f"{DB_COL_TEAM} <> ''"]
+    params = {}
+
+    if states:
+        where_clauses.append(f"{DB_COL_STATE} IN %(states)s")
+        params['states'] = tuple(states)
+    if team_roles:
+        where_clauses.append(f"{DB_COL_TEAM_ROLE} IN %(team_roles)s")
+        params['team_roles'] = tuple(team_roles)
+
+    # --- Filter by Sales Number Range ---
+    sales_num_col_casted = sql_safe_cast(DB_COL_SALES_LASTYEAR, "bigint")
+    if active_teams:
+        where_clauses.append(f"{sales_num_col_casted} >= 1")
+
+    # Apply slider range.  Important: Use 99 in the where clause, not 100.
+    if sales_number_range and \
+            (sales_number_range[0] != SLIDER_SALES_NUM_MIN or sales_number_range[1] != SLIDER_SALES_NUM_MAX):
+        selected_min, selected_max = sales_number_range
+        if selected_min > SLIDER_SALES_NUM_MIN:
+            where_clauses.append(f"{sales_num_col_casted} >= %(sales_number_min)s")
+            params['sales_number_min'] = selected_min
+        # Max is 99 for filtering
+        if selected_max < SLIDER_SALES_NUM_MAX:
+            where_clauses.append(f"{sales_num_col_casted} <= %(sales_number_max)s")
+            params['sales_number_max'] = selected_max
+
+    # --- Filter by Sales Value Range ---
+    sales_value_calculation = f"({sql_safe_cast(DB_COL_SALES_LASTYEAR, 'numeric')} * {sql_safe_cast(DB_COL_AVG_VALUE, 'numeric')})"
+    if sales_value_range and \
+            (sales_value_range[0] != SLIDER_SALES_VAL_MIN or sales_value_range[1] != SLIDER_SALES_VAL_MAX):
+        selected_min, selected_max = sales_value_range
+        if selected_min > SLIDER_SALES_VAL_MIN:
+            where_clauses.append(f"{sales_value_calculation} >= %(sales_value_min)s")
+            params['sales_value_min'] = selected_min
+        if selected_max < SLIDER_SALES_VAL_MAX:
+            where_clauses.append(f"{sales_value_calculation} <= %(sales_value_max)s")
+            params['sales_value_max'] = selected_max
+
+    where_clause = " AND ".join(where_clauses)
+    query = f"SELECT COUNT(*) FROM {DB_TABLE_AGENTS} WHERE {where_clause}"
+
+    print("--- Count Query ---")
+    print(f"SQL: {query}")
+    print(f"Params: {params}")
+    print("-------------------")
+
+    try:
+        result = run_query(query, params=params)
+        count = result.iloc[0][0] if not result.empty and result.iloc[0][0] is not None else 0
+        print(f"Count Result: {count}")
+        return count
+    except Exception as e:
+        st.error(f"Error executing count query: {e}")
+        print(f"Error during count query execution: {e}")
+        return 0
+
+
+def load_data(limit=CACHE_LIMIT, offset=0, states=None, team_roles=None, active_teams=False,
+              sales_number_range=None, sales_value_range=None):
+    """Loads data from the database based on filters, using ranges."""
+    if not st.session_state.get('authenticated', False):
+        st.error("Authentication required.")
+        return pd.DataFrame()
+
+    where_clauses = [f"{DB_COL_TEAM} IS NOT NULL", f"{DB_COL_TEAM} <> ''"]
+    params = {}
+
+    if states:
+        where_clauses.append(f"{DB_COL_STATE} IN %(states)s")
+        params['states'] = tuple(states)
+    if team_roles:
+        where_clauses.append(f"{DB_COL_TEAM_ROLE} IN %(team_roles)s")
+        params['team_roles'] = tuple(team_roles)
+
+    # --- Filter by Sales Number Range ---
+    sales_num_col_casted = sql_safe_cast(DB_COL_SALES_LASTYEAR, "bigint")
+    if active_teams:
+        where_clauses.append(f"{sales_num_col_casted} >= 1")
+
+    # Apply slider range.  Important: Use 99 in the where clause, not 100.
+    if sales_number_range and \
+            (sales_number_range[0] != SLIDER_SALES_NUM_MIN or sales_number_range[1] != SLIDER_SALES_NUM_MAX):
+        selected_min, selected_max = sales_number_range
+        if selected_min > SLIDER_SALES_NUM_MIN:
+            where_clauses.append(f"{sales_num_col_casted} >= %(sales_number_min)s")
+            params['sales_number_min'] = selected_min
+        # Max is 99 for filtering
+        if selected_max < SLIDER_SALES_NUM_MAX:
+            where_clauses.append(f"{sales_num_col_casted} <= %(sales_number_max)s")
+            params['sales_number_max'] = selected_max
+
+    # --- Filter by Sales Value Range ---
+    sales_value_calculation = f"({sql_safe_cast(DB_COL_SALES_LASTYEAR, 'numeric')} * {sql_safe_cast(DB_COL_AVG_VALUE, 'numeric')})"
+    if sales_value_range and \
+            (sales_value_range[0] != SLIDER_SALES_VAL_MIN or sales_value_range[1] != SLIDER_SALES_VAL_MAX):
+        selected_min, selected_max = sales_value_range
+        if selected_min > SLIDER_SALES_VAL_MIN:
+            where_clauses.append(f"{sales_value_calculation} >= %(sales_value_min)s")
+            params['sales_value_min'] = selected_min
+        if selected_max < SLIDER_SALES_VAL_MAX:
+            where_clauses.append(f"{sales_value_calculation} <= %(sales_value_max)s")
+            params['sales_value_max'] = selected_max
+
+    where_clause = " AND ".join(where_clauses)
+
+    query = f"""
+    SELECT
+        "Name", "Team", "Team_role", "Org", "Street", "City", "State", "Zip", "Office",
+        "Phone", "Cell", "Email", "Website", "Facebook", "Linkedin",
+        {DB_COL_SALES_LASTYEAR},
+        {DB_COL_AVG_VALUE},
+        {sales_value_calculation} AS "{DF_COL_SALES_VALUE_CALCULATED}"
+    FROM {DB_TABLE_AGENTS}
+    WHERE {where_clause}
+    ORDER BY "Name"
+    LIMIT %(limit)s OFFSET %(offset)s;
     """
-    return run_query(query)
+    params['limit'] = limit
+    params['offset'] = offset
+
+    print("--- Data Query ---")
+    print(f"SQL: {query}")
+    print(f"Params: {params}")
+    print("------------------")
+
+    try:
+        df = run_query(query, params=params)
+        print(f"Columns returned by load_data: {df.columns.tolist()}")
+        if not df.empty:
+            print("Raw data sample (head) from load_data:")
+            cols_to_print = [col for col in
+                             [DF_COL_SALES_LASTYEAR, DF_COL_AVG_VALUE_FROM_DB, DF_COL_SALES_VALUE_CALCULATED] if
+                             col in df.columns]
+            if cols_to_print:
+                print(df[cols_to_print].head())
+            else:
+                print("Could not find expected sales/average columns in returned data.")
+
+        if DF_COL_SALES_LASTYEAR not in df.columns:
+            print(f"Warning: Expected DataFrame column '{DF_COL_SALES_LASTYEAR}' not found after query.")
+            df[DF_COL_SALES_LASTYEAR] = np.nan
+        if DF_COL_SALES_VALUE_CALCULATED not in df.columns:
+            print(
+                f"Warning: Expected DataFrame column '{DF_COL_SALES_VALUE_CALCULATED}' not found after query.")
+            df[DF_COL_SALES_VALUE_CALCULATED] = np.nan
+        print(f"Number of rows returned by load_data: {len(df)}")
+        return df
+    except Exception as e:
+        st.error(f"Error executing data query: {e}")
+        print(f"Error during data query execution: {e}")
+        return pd.DataFrame()
+
 
 def z_agents_view():
+    """Displays the Z Agents data view with filtering and pagination."""
     st.title("Teams View")
-    if st.session_state.authenticated:
-        try:
-            df = load_data()
 
-            # Sidebar filters for State and Team Role
-            st.sidebar.header("Filter by Location and Role")
+    # Initialize session state variables safely
+    st.session_state.setdefault('offset', 0)
+    st.session_state.setdefault('filtered_data', pd.DataFrame())
+    st.session_state.setdefault('total_rows', 0)
+    st.session_state.setdefault('selected_states', [])
+    st.session_state.setdefault('selected_team_roles', [])
+    st.session_state.setdefault('active_teams_only', True)
+    st.session_state.setdefault('sales_number_range', (SLIDER_SALES_NUM_MIN, SLIDER_SALES_NUM_MAX))
+    st.session_state.setdefault('sales_value_range', (SLIDER_SALES_VAL_MIN, SLIDER_SALES_VAL_MAX))
+    st.session_state.setdefault('authenticated', True)
 
+    if st.session_state.get('authenticated', False):
+        # --- Sidebar Filters ---
+        with st.sidebar:
+            st.header("Filter by Location and Role")
             us_states = ['AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
                          'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD',
                          'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ',
                          'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC',
                          'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY']
-            selected_states = st.sidebar.multiselect("State", us_states)
-            if selected_states:
-                df = df[df["State"].isin(selected_states)]
 
-            unique_team_roles = sorted(df["Team_role"].dropna().unique())
-            selected_team_roles = st.sidebar.multiselect("Team Role", unique_team_roles)
-            if selected_team_roles:
-                df = df[df["Team_role"].isin(selected_team_roles)]
+            select_all_states = st.checkbox("Select All States", key="select_all_states")
+            if select_all_states:
+                st.session_state.selected_states = us_states
+            else:
+                st.session_state.selected_states = st.multiselect(
+                    "State", us_states, default=st.session_state.selected_states, key="state_select"
+                )
+
+            try:
+                role_query = f"SELECT DISTINCT {DB_COL_TEAM_ROLE} FROM {DB_TABLE_AGENTS} WHERE {DB_COL_TEAM_ROLE} IS NOT NULL AND {DB_COL_TEAM_ROLE} <> '' ORDER BY {DB_COL_TEAM_ROLE}"
+                print(f"Executing Team Role Query: {role_query}")
+                unique_team_roles_df = run_query(role_query)
+                unique_team_roles = sorted(unique_team_roles_df[unique_team_roles_df.columns[0]].dropna().unique()) if not unique_team_roles_df.empty else []
+            except Exception as e:
+                st.warning(f"Could not load team roles: {e}")
+                print(f"Error loading team roles: {e}")
+                unique_team_roles = []
+
+            st.session_state.selected_team_roles = st.multiselect(
+                "Team Role", unique_team_roles, default=st.session_state.selected_team_roles, key="role_select"
+            )
 
             st.subheader("Sales Filters")
+            st.session_state.active_teams_only = st.checkbox(
+                "Active Teams Only", value=st.session_state.active_teams_only,
+                key="active_teams_check"
+            )
 
-            # Expander for Sales Number filter
-            with st.expander("Filter 'Sales # (12 Mo.)'"):
-                num_col1, num_col2, num_col3 = st.columns([1, 2, 2])
-                with num_col1:
-                    num_filter_type = st.selectbox("Type", ["=", ">=", "<=", ">", "<", "Between"], key="sales_num_type")
-                with num_col2:
-                    num_value1 = st.number_input("Value 1", value=df["Sales # (12 Mo.) Raw"].min(), key="sales_num_val1")
-                num_value2 = None
-                if num_filter_type == "Between":
-                    with num_col3:
-                        num_value2 = st.number_input("Value 2", value=df["Sales # (12 Mo.) Raw"].max(), key="sales_num_val2")
+            # --- Sales Number Slider ---
+            # Important:  The max slider value is 100, but the actual filter in the query uses 99.
+            st.session_state.sales_number_range = st.slider(
+                "Filter by Sales # (12 Mo.)",
+                min_value=SLIDER_SALES_NUM_MIN,
+                max_value=SLIDER_SALES_NUM_MAX,  # Use 100 here
+                value=st.session_state.sales_number_range,
+                step=SLIDER_SALES_NUM_STEP,
+                format="%d",  # No formatting for the slider, show raw numbers
+                key="sales_num_slider"
+            )
 
-                if num_filter_type == "=":
-                    df = df[df["Sales # (12 Mo.) Raw"] == num_value1]
-                elif num_filter_type == ">=":
-                    df = df[df["Sales # (12 Mo.) Raw"] >= num_value1]
-                elif num_filter_type == "<=":
-                    df = df[df["Sales # (12 Mo.) Raw"] <= num_value1]
-                elif num_filter_type == ">":
-                    df = df[df["Sales # (12 Mo.) Raw"] > num_value1]
-                elif num_filter_type == "<":
-                    df = df[df["Sales # (12 Mo.) Raw"] < num_value1]
-                elif num_filter_type == "Between" and num_value2 is not None:
-                    df = df[(df["Sales # (12 Mo.) Raw"] >= num_value1) & (df["Sales # (12 Mo.) Raw"] <= num_value2)]
+            st.session_state.sales_value_range = st.slider(
+                "Filter by Sales $ (12 Mo.)",
+                min_value=SLIDER_SALES_VAL_MIN,
+                max_value=SLIDER_SALES_VAL_MAX,
+                value=st.session_state.sales_value_range,
+                step=SLIDER_SALES_VAL_STEP,
+                format=SLIDER_SALES_VAL_FORMAT,
+                key="sales_val_slider"
+            )
 
-            # Expander for Sales Dollar filter
-            with st.expander("Filter 'Sales $ (12 Mo.)'"):
-                dollar_col1, dollar_col2, dollar_col3 = st.columns([1, 2, 2])
-                with dollar_col1:
-                    dollar_filter_type = st.selectbox("Type", ["=", ">=", "<=", ">", "<", "Between"], key="sales_dollar_type")
-                with dollar_col2:
-                    dollar_value1 = st.number_input("Value 1", value=df["Sales $ (12 Mo.) Raw"].min(), key="sales_dollar_val1")
-                dollar_value2 = None
-                if dollar_filter_type == "Between":
-                    with dollar_col3:
-                        dollar_value2 = st.number_input("Value 2", value=df["Sales $ (12 Mo.) Raw"].max(), key="sales_dollar_val2")
+            apply_filters_button = st.button("Apply Filters", key="apply_filters")
 
-                if dollar_filter_type == "=":
-                    df = df[df["Sales $ (12 Mo.) Raw"] == dollar_value1]
-                elif dollar_filter_type == ">=":
-                    df = df[df["Sales $ (12 Mo.) Raw"] >= dollar_value1]
-                elif dollar_filter_type == "<=":
-                    df = df[df["Sales $ (12 Mo.) Raw"] <= dollar_value1]
-                elif dollar_filter_type == ">":
-                    df = df[df["Sales $ (12 Mo.) Raw"] > dollar_value1]
-                elif dollar_filter_type == "<":
-                    df = df[df["Sales $ (12 Mo.) Raw"] < dollar_value1]
-                elif dollar_filter_type == "Between" and dollar_value2 is not None:
-                    df = df[(df["Sales $ (12 Mo.) Raw"] >= dollar_value1) & (df["Sales $ (12 Mo.) Raw"] <= dollar_value2)]
+        # --- Apply Filters Logic ---
+        if apply_filters_button:
+            st.session_state.offset = 0
+            print("\n--- Applying Filters ---")
+            with st.spinner("Calculating total rows..."):
+                st.session_state.total_rows = get_total_row_count(
+                    st.session_state.selected_states, st.session_state.selected_team_roles,
+                    st.session_state.active_teams_only,
+                    st.session_state.sales_number_range,
+                    st.session_state.sales_value_range
+                )
+            if st.session_state.total_rows > 0:
+                with st.spinner("Loading data..."):
+                    st.session_state.filtered_data = load_data(
+                        CACHE_LIMIT, 0, st.session_state.selected_states, st.session_state.selected_team_roles,
+                        st.session_state.active_teams_only,
+                        st.session_state.sales_number_range,
+                        st.session_state.sales_value_range
+                    )
+            else:
+                st.session_state.filtered_data = pd.DataFrame()
+            print("------------------------\n")
+            st.rerun()
 
-            # Format for display
-            df_display = df.copy()
-            df_display["Sales # (12 Mo.)"] = df_display["Sales # (12 Mo.) Raw"].apply(lambda x: f"{x:,}")
-            df_display["Sales $ (12 Mo.)"] = df_display["Sales $ (12 Mo.) Raw"].apply(lambda x: f"${x:,.0f}")
+        # --- Display Data ---
+        current_data = st.session_state.get('filtered_data', pd.DataFrame())
 
-            st.dataframe(df_display[["Name", "Team", "Team_role", "Org", "Street", "City", "State", "Zip", "Office",
-                                      "Phone", "Cell", "Email", "Website", "Facebook", "Linkedin",
-                                      "Sales # (12 Mo.)", "Sales $ (12 Mo.)"]],
-                         use_container_width=True,
-                         column_config={
-                             "Sales # (12 Mo.)": st.column_config.NumberColumn(
-                                 "Sales # (12 Mo.)",
-                                 format="%d"
-                             ),
-                             "Sales $ (12 Mo.)": st.column_config.NumberColumn(
-                                 "Sales $ (12 Mo.)",
-                                 format="$%d"
-                             )
-                         })
+        if not current_data.empty:
+            df_display = current_data.copy()
+            print(f"Columns in df_display before formatting: {df_display.columns.tolist()}")
 
-            col_metric, col_dl = st.columns([1,2])
+            # --- Format Sales Columns for Display ---
+            df_display[DISPLAY_COL_SALES_NUMBER] = df_display[DF_COL_SALES_LASTYEAR]  # Show actual value
+            df_display[DISPLAY_COL_SALES_VALUE] = df_display[DF_COL_SALES_VALUE_CALCULATED] # show calculated
+
+            #  Format for display in the table
+            df_display[DISPLAY_COL_SALES_NUMBER] = df_display[DISPLAY_COL_SALES_NUMBER].apply(lambda x: f"{x:,.0f}")
+            df_display[DISPLAY_COL_SALES_VALUE] = df_display[DISPLAY_COL_SALES_VALUE].apply(lambda x: f"${x:,.0f}")
+
+            # --- Define Columns for Display ---
+            columns_to_display_in_table = [
+                "Name", "Team", "Team_role", "Org",
+                "Phone", "Cell", "Email",
+                DISPLAY_COL_SALES_NUMBER,
+                DISPLAY_COL_SALES_VALUE
+            ]
+            valid_columns_to_display = [col for col in columns_to_display_in_table if col in df_display.columns]
+
+            if not valid_columns_to_display:
+                st.error("No valid columns available to display.")
+            else:
+                # --- Display DataFrame ---
+                st.dataframe(
+                    df_display[valid_columns_to_display],
+                    use_container_width=True,
+                    column_config={
+                        # Email defaults to text display now
+                        DISPLAY_COL_SALES_NUMBER: st.column_config.TextColumn(help=f"Source: {DF_COL_SALES_LASTYEAR}"),
+                        DISPLAY_COL_SALES_VALUE: st.column_config.TextColumn(
+                            help=f"Source: {DF_COL_SALES_VALUE_CALCULATED}"),
+                    },
+                    hide_index=True
+                )
+
+            # --- Metrics and Download ---
+            col_metric, col_dl = st.columns([2, 1])
             with col_metric:
-                st.metric("Total Rows", len(df))
+                st.metric("Rows Displayed", len(df_display))
+                st.metric("Total Rows Matching Filters", st.session_state.total_rows)
+                start_row = st.session_state.offset + 1
+                end_row = st.session_state.offset + len(df_display)
+                st.caption(f"Showing rows {start_row}-{end_row} of {st.session_state.total_rows}")
             with col_dl:
-                st.download_button("Export as CSV", data=df.to_csv(index=False).encode('utf-8'), file_name="z_agents.csv", mime="text/csv")
+                csv_data = df_display[valid_columns_to_display].to_csv(index=False).encode('utf-8')
+                st.download_button(label="Export Displayed Data as CSV", data=csv_data,
+                                   file_name="filtered_agents_view.csv", mime="text/csv", key='download_csv')
 
-        except ValueError as e:
-            st.error(e)
-        except Exception as e:
-            st.error(f"An unexpected error occurred: {e}")
+            # --- Pagination ---
+            if end_row < st.session_state.total_rows:
+                if st.button("Load More", key="load_more"):
+                    print("\n--- Loading More ---")
+                    with st.spinner("Loading more data..."):
+                        new_data = load_data(
+                            CACHE_LIMIT, st.session_state.offset + CACHE_LIMIT,
+                            st.session_state.selected_states, st.session_state.selected_team_roles,
+                            st.session_state.active_teams_only,
+                            st.session_state.sales_number_range,
+                            st.session_state.sales_value_range
+                        )
+                    if not new_data.empty:
+                        st.session_state.filtered_data = pd.concat(
+                            [st.session_state.filtered_data, new_data], ignore_index=True
+                        )
+                        st.session_state.offset += CACHE_LIMIT
+                        print("------------------\n")
+                        st.rerun()
+                    else:
+                        st.warning("No more data found.")
+                        print("Load More returned empty DataFrame unexpectedly.")
+            elif st.session_state.total_rows > 0 and not current_data.empty:
+                st.success("All matching data loaded.")
+
+        # --- Handle No Data Scenarios ---
+        elif st.session_state.total_rows == 0 and st.session_state.get('apply_filters', False):
+            st.info("No data matches the current filters.")
+        elif not st.session_state.get('apply_filters', False):
+            st.info("Apply filters using the sidebar to load data.")
+
     else:
         st.info("Please log in to view Z Agents data.")
+
+
+# --- Main execution ---
+if __name__ == "__main__":
+    print("----- Streamlit App Start / Rerun -----")
+    z_agents_view()
