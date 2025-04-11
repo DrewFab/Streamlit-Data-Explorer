@@ -1,11 +1,11 @@
-<file name=main.py>
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+[server]
+headless = true
+port = 8501
+enableCORS = false
 
-# Existing import statements
-import app.some_module
-import app.another_module
-
-# Rest of the code
-</file>
+[theme]
+base = "light"
+primaryColor = "#F63366"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F0F2F6"
+textColor = "#262730"
