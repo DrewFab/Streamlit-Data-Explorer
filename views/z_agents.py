@@ -10,6 +10,7 @@ DB_COL_SALES_LASTYEAR = '"sales_lastyear"'
 DB_COL_AVG_VALUE = '"averageValueThreeYear"'
 DB_COL_TEAM = '"Team"'
 DB_COL_TEAM_ROLE = '"Team_role"'
+DB_COL_ORG = '"Org"'
 DB_COL_STATE = '"State"'
 DB_TABLE_AGENTS = '"z_agents"'
 
@@ -54,6 +55,9 @@ def get_total_row_count(states=None, team_roles=None, active_teams=False,
     if team_roles:
         where_clauses.append(f"{DB_COL_TEAM_ROLE} IN %(team_roles)s")
         params['team_roles'] = tuple(team_roles)
+    if st.session_state.get("filter_brokerage", "").strip():
+        where_clauses.append(f"{DB_COL_ORG} ILIKE %(brokerage)s")
+        params['brokerage'] = f"%{st.session_state.filter_brokerage.strip()}%"
 
     # --- Filter by Sales Number Range ---
     sales_num_col_casted = sql_safe_cast(DB_COL_SALES_LASTYEAR, "bigint")
@@ -103,6 +107,8 @@ def get_total_row_count(states=None, team_roles=None, active_teams=False,
         return 0
 
 
+
+
 def load_data(limit=CACHE_LIMIT, offset=0, states=None, team_roles=None, active_teams=False,
               sales_number_range=None, sales_value_range=None):
     """Loads data from the database based on filters, using ranges."""
@@ -119,6 +125,9 @@ def load_data(limit=CACHE_LIMIT, offset=0, states=None, team_roles=None, active_
     if team_roles:
         where_clauses.append(f"{DB_COL_TEAM_ROLE} IN %(team_roles)s")
         params['team_roles'] = tuple(team_roles)
+    if st.session_state.get("filter_brokerage", "").strip():
+        where_clauses.append(f"{DB_COL_ORG} ILIKE %(brokerage)s")
+        params['brokerage'] = f"%{st.session_state.filter_brokerage.strip()}%"
 
     # --- Filter by Sales Number Range ---
     sales_num_col_casted = sql_safe_cast(DB_COL_SALES_LASTYEAR, "bigint")
@@ -201,7 +210,7 @@ def load_data(limit=CACHE_LIMIT, offset=0, states=None, team_roles=None, active_
 
 def z_agents_view():
     """Displays the Z Agents data view with filtering and pagination."""
-    st.title("Teams View")
+    st.title("Team Members View")
 
     # Initialize session state variables safely
     st.session_state.setdefault('offset', 0)
@@ -213,6 +222,7 @@ def z_agents_view():
     st.session_state.setdefault('sales_number_range', (SLIDER_SALES_NUM_MIN, SLIDER_SALES_NUM_MAX))
     st.session_state.setdefault('sales_value_range', (SLIDER_SALES_VAL_MIN, SLIDER_SALES_VAL_MAX))
     st.session_state.setdefault('authenticated', True)
+    st.session_state.setdefault('filter_brokerage', '')
 
     if st.session_state.get('authenticated', False):
         # --- Sidebar Filters ---
@@ -224,13 +234,14 @@ def z_agents_view():
                          'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC',
                          'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY']
 
-            select_all_states = st.checkbox("Select All States", key="select_all_states")
+            select_all_states = st.checkbox("Select All States", key="select_all_states", value=True)
             if select_all_states:
                 st.session_state.selected_states = us_states
             else:
                 st.session_state.selected_states = st.multiselect(
                     "State", us_states, default=st.session_state.selected_states, key="state_select"
                 )
+            st.text_input("Brokerage", key="filter_brokerage")
 
             try:
                 role_query = f"SELECT DISTINCT {DB_COL_TEAM_ROLE} FROM {DB_TABLE_AGENTS} WHERE {DB_COL_TEAM_ROLE} IS NOT NULL AND {DB_COL_TEAM_ROLE} <> '' ORDER BY {DB_COL_TEAM_ROLE}"
@@ -248,7 +259,7 @@ def z_agents_view():
 
             st.subheader("Sales Filters")
             st.session_state.active_teams_only = st.checkbox(
-                "Active Teams Only", value=st.session_state.active_teams_only,
+                "Active Members Only", value=st.session_state.active_teams_only,
                 key="active_teams_check"
             )
 
@@ -274,8 +285,43 @@ def z_agents_view():
                 key="sales_val_slider"
             )
 
-            apply_filters_button = st.button("Apply Filters", key="apply_filters")
+            col1, col2 = st.columns(2)
+            with col1:
+                apply_filters_button = st.button("Apply Filters", key="apply_filters")
+            with col2:
+                if st.button("Clear Filters", key="clear_filters"):
+                    # Reset filter-related session state values to defaults
+                    st.session_state.selected_states = []
+                    st.session_state.selected_team_roles = []
+                    st.session_state.active_teams_only = True
+                    st.session_state.sales_number_range = (SLIDER_SALES_NUM_MIN, SLIDER_SALES_NUM_MAX)
+                    st.session_state.sales_value_range = (SLIDER_SALES_VAL_MIN, SLIDER_SALES_VAL_MAX)
+                    if "filter_brokerage" in st.session_state:
+                        del st.session_state["filter_brokerage"]
+                    st.session_state.offset = 0
+                    st.session_state.filtered_data = pd.DataFrame()
+                    st.rerun()
 
+        if 'auto_loaded' not in st.session_state:
+            with st.spinner("Loading data..."):
+                st.session_state.total_rows = get_total_row_count(
+                    st.session_state.selected_states,
+                    st.session_state.selected_team_roles,
+                    st.session_state.active_teams_only,
+                    st.session_state.sales_number_range,
+                    st.session_state.sales_value_range
+                )
+                st.session_state.filtered_data = load_data(
+                    CACHE_LIMIT, 0,
+                    st.session_state.selected_states,
+                    st.session_state.selected_team_roles,
+                    st.session_state.active_teams_only,
+                    st.session_state.sales_number_range,
+                    st.session_state.sales_value_range
+                )
+            st.session_state.auto_loaded = True
+            st.session_state.filters_applied = True
+            st.experimental_rerun()
         # --- Apply Filters Logic ---
         if apply_filters_button:
             st.session_state.offset = 0
@@ -299,6 +345,23 @@ def z_agents_view():
                 st.session_state.filtered_data = pd.DataFrame()
             print("------------------------\n")
             st.rerun()
+            if st.session_state.filtered_data.empty and 'preloaded' not in st.session_state:
+                st.session_state.total_rows = get_total_row_count(
+                    st.session_state.selected_states,
+                    st.session_state.selected_team_roles,
+                    st.session_state.active_teams_only,
+                    st.session_state.sales_number_range,
+                    st.session_state.sales_value_range
+                )
+                st.session_state.filtered_data = load_data(
+                    CACHE_LIMIT, 0,
+                    st.session_state.selected_states,
+                    st.session_state.selected_team_roles,
+                    st.session_state.active_teams_only,
+                    st.session_state.sales_number_range,
+                    st.session_state.sales_value_range
+                )
+                st.session_state.preloaded = True
 
         # --- Display Data ---
         current_data = st.session_state.get('filtered_data', pd.DataFrame())
@@ -379,9 +442,9 @@ def z_agents_view():
                 st.success("All matching data loaded.")
 
         # --- Handle No Data Scenarios ---
-        elif st.session_state.total_rows == 0 and st.session_state.get('apply_filters', False):
+        elif st.session_state.total_rows == 0 and st.session_state.get('filters_applied', False):
             st.info("No data matches the current filters.")
-        elif not st.session_state.get('apply_filters', False):
+        elif not st.session_state.get('filters_applied', False):
             st.info("Apply filters using the sidebar to load data.")
 
     else:
