@@ -321,7 +321,7 @@ def z_agents_view():
                 )
             st.session_state.auto_loaded = True
             st.session_state.filters_applied = True
-            st.experimental_rerun()
+            st.rerun()
         # --- Apply Filters Logic ---
         if apply_filters_button:
             st.session_state.offset = 0
