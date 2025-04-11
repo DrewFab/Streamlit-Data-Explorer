@@ -1,4 +1,5 @@
 import streamlit as st
+import pandas as pd
 
 st.set_page_config(page_title="Explorer", layout="wide")
 
@@ -6,8 +7,9 @@ from auth import login, logout, is_authenticated
 from views.z_agents import z_agents_view
 from views.agents import agents_view
 from views.transactions import transactions_view
+from views.teams import teams_view  # Import the new teams view
 
-# Initialize session state keys used in transactions_view
+# Initialize session state keys used in various views
 if 'transactions_offset' not in st.session_state:
     st.session_state['transactions_offset'] = 0
 if 'filtered_transactions_data' not in st.session_state:
@@ -22,7 +24,7 @@ session_defaults = {
     "username": "",
     "password": "",
     "authenticated": False,
-    "selected_table": "Teams"
+    "selected_table": "Teams"  # Default to Teams view or adjust as needed
 }
 for key, default in session_defaults.items():
     if key not in st.session_state:
@@ -43,17 +45,18 @@ def render_sidebar():
     if not is_authenticated():
         login()
     else:
-        # Display navigation options when logged in
-        options = ["Teams", "Agents", "Transactions"]
-        st.session_state.selected_table = st.selectbox("Table", options=options, index=0) # Set index to 0 for "Teams"
-        st.markdown("---") # Spacer before filters
-
+        # Display navigation options when logged in, including Teams
+        options = ["Teams", "Team Members", "Agents", "Transactions"]
+        st.session_state.selected_table = st.selectbox("Table", options=options, index=0)
+        st.markdown("---")  # Spacer before filters
 
 def render_main():
     # Render the appropriate view based on the selected table if logged in.
     if is_authenticated():
         selected_table = st.session_state.selected_table
         if selected_table == "Teams":
+            teams_view()
+        elif selected_table == "Team Members":
             z_agents_view()
         elif selected_table == "Agents":
             agents_view()
