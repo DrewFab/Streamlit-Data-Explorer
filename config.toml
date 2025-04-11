@@ -1,0 +1,11 @@
+<file name=main.py>
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Existing import statements
+import app.some_module
+import app.another_module
+
+# Rest of the code
+</file>
