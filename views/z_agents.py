@@ -166,6 +166,8 @@ def load_data(limit=CACHE_LIMIT, offset=0, states=None, team_roles=None, active_
         "Phone", "Cell", "Email", "Website", "Facebook", "Linkedin",
         {DB_COL_SALES_LASTYEAR},
         {DB_COL_AVG_VALUE},
+        "priceRangeThreeYearMin" AS "3 Year Min",
+        "priceRangeThreeYearMax" AS "3 Year Max",
         {sales_value_calculation} AS "{DF_COL_SALES_VALUE_CALCULATED}"
     FROM {DB_TABLE_AGENTS}
     WHERE {where_clause}
@@ -378,12 +380,18 @@ def z_agents_view():
             df_display[DISPLAY_COL_SALES_NUMBER] = df_display[DISPLAY_COL_SALES_NUMBER].apply(lambda x: f"{x:,.0f}")
             df_display[DISPLAY_COL_SALES_VALUE] = df_display[DISPLAY_COL_SALES_VALUE].apply(lambda x: f"${x:,.0f}")
 
+            # Optionally format the new price range columns if needed (here showing two decimal places)
+            df_display["3 Year Min"] = df_display["3 Year Min"].apply(lambda x: f"${x:,.0f}" if pd.notnull(x) else x)
+            df_display["3 Year Max"] = df_display["3 Year Max"].apply(lambda x: f"${x:,.0f}" if pd.notnull(x) else x)
+
             # --- Define Columns for Display ---
             columns_to_display_in_table = [
                 "Name", "Team", "Team_role", "Org",
                 "Phone", "Cell", "Email",
                 DISPLAY_COL_SALES_NUMBER,
-                DISPLAY_COL_SALES_VALUE
+                DISPLAY_COL_SALES_VALUE,
+                "3 Year Min",
+                "3 Year Max"
             ]
             valid_columns_to_display = [col for col in columns_to_display_in_table if col in df_display.columns]
 
