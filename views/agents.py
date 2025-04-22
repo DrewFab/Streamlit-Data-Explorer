@@ -25,6 +25,11 @@ def load_agents_data(limit=CACHE_LIMIT_AGENTS, offset=0, states=None, agent_name
         where_clauses.append('LOWER(office_name) LIKE %(brokerage_like)s')
         params['brokerage_like'] = f"%{brokerage_filter}%"
 
+    association_filter = st.session_state.get("filter_association", "").strip().lower()
+    if association_filter:
+        where_clauses.append('LOWER(association) LIKE %(association_like)s')
+        params['association_like'] = f"%{association_filter}%"
+
     where_clause = " AND ".join(where_clauses)
     if where_clause:
         where_clause = "WHERE " + where_clause
@@ -73,6 +78,11 @@ def get_total_agents_count(states=None, agent_name_filter=None, brokerage_filter
         where_clauses.append('LOWER(office_name) LIKE %(brokerage_like)s')
         params['brokerage_like'] = f"%{brokerage_filter}%"
 
+    association_filter = st.session_state.get("filter_association", "").strip().lower()
+    if association_filter:
+        where_clauses.append('LOWER(association) LIKE %(association_like)s')
+        params['association_like'] = f"%{association_filter}%"
+
     where_clause = " AND ".join(where_clauses)
     if where_clause:
         where_clause = "WHERE " + where_clause
@@ -110,6 +120,7 @@ def agents_view():
         st.header("Filter Agents by Location")
         st.text_input("Agent Name", key="filter_agent")
         st.text_input("Brokerage", key="filter_brokerage")
+        st.text_input("Association", key="filter_association")
 
         st.header("Filter Agents by Location")
         select_all_states_agents = st.checkbox("Select All States", key="select_all_states_agents", value=True)
@@ -129,6 +140,8 @@ def agents_view():
                 st.session_state.agents_filters_applied = False
                 st.session_state.agents_offset = 0
                 st.session_state.filtered_agents_data = pd.DataFrame()
+                if "filter_association" in st.session_state:
+                    del st.session_state["filter_association"]
                 st.rerun()
 
     agent_name_filter = st.session_state.get("filter_agent", "").strip().lower()
