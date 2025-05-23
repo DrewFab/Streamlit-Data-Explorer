@@ -225,6 +225,7 @@ def z_agents_view():
     st.session_state.setdefault('sales_value_range', (SLIDER_SALES_VAL_MIN, SLIDER_SALES_VAL_MAX))
     st.session_state.setdefault('authenticated', True)
     st.session_state.setdefault('filter_brokerage', '')
+    st.session_state.setdefault('load_more_requested', False)
 
     if st.session_state.get('authenticated', False):
         # --- Sidebar Filters ---
@@ -368,6 +369,31 @@ def z_agents_view():
         # --- Display Data ---
         current_data = st.session_state.get('filtered_data', pd.DataFrame())
 
+        start_row = st.session_state.offset + 1
+        end_row = st.session_state.offset + len(current_data)
+        # --- If load_more_requested, trigger data append and rerun ---
+        if st.session_state.load_more_requested:
+            print("\n--- Loading More ---")
+            with st.spinner("Loading more data..."):
+                new_data = load_data(
+                    CACHE_LIMIT, st.session_state.offset + CACHE_LIMIT,
+                    st.session_state.selected_states, st.session_state.selected_team_roles,
+                    st.session_state.active_teams_only,
+                    st.session_state.sales_number_range,
+                    st.session_state.sales_value_range
+                )
+            if not new_data.empty:
+                st.session_state.filtered_data = pd.concat(
+                    [st.session_state.filtered_data, new_data], ignore_index=True
+                )
+                st.session_state.offset += CACHE_LIMIT
+                print("------------------\n")
+            else:
+                st.warning("No more data found.")
+                print("Load More returned empty DataFrame unexpectedly.")
+            st.session_state.load_more_requested = False
+            st.rerun()
+
         if not current_data.empty:
             df_display = current_data.copy()
             print(f"Columns in df_display before formatting: {df_display.columns.tolist()}")
@@ -424,29 +450,13 @@ def z_agents_view():
                 st.download_button(label="Export Displayed Data as CSV", data=csv_data,
                                    file_name="filtered_agents_view.csv", mime="text/csv", key='download_csv')
 
-            # --- Pagination ---
+            # --- Load More Button (now below table) ---
             if end_row < st.session_state.total_rows:
                 if st.button("Load More", key="load_more"):
-                    print("\n--- Loading More ---")
-                    with st.spinner("Loading more data..."):
-                        new_data = load_data(
-                            CACHE_LIMIT, st.session_state.offset + CACHE_LIMIT,
-                            st.session_state.selected_states, st.session_state.selected_team_roles,
-                            st.session_state.active_teams_only,
-                            st.session_state.sales_number_range,
-                            st.session_state.sales_value_range
-                        )
-                    if not new_data.empty:
-                        st.session_state.filtered_data = pd.concat(
-                            [st.session_state.filtered_data, new_data], ignore_index=True
-                        )
-                        st.session_state.offset += CACHE_LIMIT
-                        print("------------------\n")
-                        st.rerun()
-                    else:
-                        st.warning("No more data found.")
-                        print("Load More returned empty DataFrame unexpectedly.")
-            elif st.session_state.total_rows > 0 and not current_data.empty:
+                    st.session_state.load_more_requested = True
+
+            # --- Pagination status ---
+            if end_row >= st.session_state.total_rows and st.session_state.total_rows > 0:
                 st.success("All matching data loaded.")
 
         # --- Handle No Data Scenarios ---
