@@ -128,9 +128,12 @@ def render_bottom_controls(df_display: pd.DataFrame, total_db_rows: int, load_mo
     # Always show the Load More button; disable it if no callback is provided
     load_more_disabled = load_more_callback is None
     if st.button("Load More", disabled=load_more_disabled):
-        if load_more_callback:
-            load_more_callback()
-            st.experimental_rerun()
+        st.session_state.load_more_requested = True
+
+    # If load_more_requested was flagged, run the callback and reset the flag
+    if st.session_state.get("load_more_requested") and load_more_callback:
+        load_more_callback()
+        st.session_state.load_more_requested = False
 
     # Provide a CSV export of the currently displayed DataFrame
     csv = df_display.to_csv(index=False).encode('utf-8')
