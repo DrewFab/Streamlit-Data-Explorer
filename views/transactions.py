@@ -16,7 +16,7 @@ today = datetime.now().date()
 
 @st.cache_data(ttl=600)
 def load_transactions_data(limit=CACHE_LIMIT_TRANSACTIONS, offset=0, date_range=None, states=None, statuses=None,
-                           price_min=None, price_max=None):
+                           price_min=None, price_max=None, agent_first=None, agent_last=None, brokerage=None):
     query = """
     SELECT
       email AS "Email",
@@ -49,7 +49,7 @@ def load_transactions_data(limit=CACHE_LIMIT_TRANSACTIONS, offset=0, date_range=
         where_clauses.append("state IN %s")
         params_list.append(tuple(states))
 
-    if statuses:
+    if statuses and len(statuses) > 0:
         where_clauses.append("status IN %s")
         params_list.append(tuple(statuses))
 
@@ -61,6 +61,18 @@ def load_transactions_data(limit=CACHE_LIMIT_TRANSACTIONS, offset=0, date_range=
         where_clauses.append("price <= %s")
         params_list.append(price_max)
 
+    if agent_first:
+        where_clauses.append("LOWER(presented_by_first_name) LIKE %s")
+        params_list.append(f"%{agent_first.lower()}%")
+
+    if agent_last:
+        where_clauses.append("LOWER(presented_by_last_name) LIKE %s")
+        params_list.append(f"%{agent_last.lower()}%")
+
+    if brokerage:
+        where_clauses.append("LOWER(brokered_by) LIKE %s")
+        params_list.append(f"%{brokerage.lower()}%")
+
     if where_clauses:
         query += " AND " + " AND ".join(where_clauses)
 
@@ -68,10 +80,16 @@ def load_transactions_data(limit=CACHE_LIMIT_TRANSACTIONS, offset=0, date_range=
     params_list.append(limit)
     params_list.append(offset)
 
+    print("\n[DEBUG] Transactions Query:")
+    print(query)
+    print("[DEBUG] Params:")
+    print(params_list)
+
     return run_query(query, params=tuple(params_list))
 
 
-def get_total_matching_rows(date_range=None, states=None, statuses=None, price_min=None, price_max=None):
+def get_total_matching_rows(date_range=None, states=None, statuses=None, price_min=None, price_max=None,
+                            agent_first=None, agent_last=None, brokerage=None):
     query = """
     SELECT COUNT(*) FROM transactions_2 WHERE 1=1
     """
@@ -86,7 +104,7 @@ def get_total_matching_rows(date_range=None, states=None, statuses=None, price_m
         where_clauses.append("state IN %s")
         params_list.append(tuple(states))
 
-    if statuses:
+    if statuses and len(statuses) > 0:
         where_clauses.append("status IN %s")
         params_list.append(tuple(statuses))
 
@@ -98,10 +116,28 @@ def get_total_matching_rows(date_range=None, states=None, statuses=None, price_m
         where_clauses.append("price <= %s")
         params_list.append(price_max)
 
+    if agent_first:
+        where_clauses.append("LOWER(presented_by_first_name) LIKE %s")
+        params_list.append(f"%{agent_first.lower()}%")
+
+    if agent_last:
+        where_clauses.append("LOWER(presented_by_last_name) LIKE %s")
+        params_list.append(f"%{agent_last.lower()}%")
+
+    if brokerage:
+        where_clauses.append("LOWER(brokered_by) LIKE %s")
+        params_list.append(f"%{brokerage.lower()}%")
+
     if where_clauses:
         query += " AND " + " AND ".join(where_clauses)
 
     result = run_query(query, params=tuple(params_list))
+
+    print("\n[DEBUG] Total Rows Query:")
+    print(query)
+    print("[DEBUG] Params:")
+    print(params_list)
+
     return result.iloc[0][0] if not result.empty else 0
 
 
@@ -181,6 +217,9 @@ def transactions_view():
     st.session_state.date_range = (start_date, end_date)
 
     if apply_filters or st.session_state.filtered_transactions_data.empty or st.session_state.get("load_more_requested"):
+        if apply_filters:
+            st.session_state.transactions_offset = 0
+            st.session_state.filtered_transactions_data = pd.DataFrame()
         brokerage_filter = st.session_state.get("filter_brokerage", "").lower().strip()
         agent_first_filter = st.session_state.get("filter_agent_first", "").lower().strip()
         agent_last_filter = st.session_state.get("filter_agent_last", "").lower().strip()
@@ -198,7 +237,10 @@ def transactions_view():
             states=selected_states,
             statuses=selected_statuses,
             price_min=min_price,
-            price_max=max_price
+            price_max=max_price,
+            agent_first=agent_first_filter if agent_first_filter else None,
+            agent_last=agent_last_filter if agent_last_filter else None,
+            brokerage=brokerage_filter if brokerage_filter else None
         )
 
         if 'listing_agent_id' in df.columns:
@@ -216,13 +258,6 @@ def transactions_view():
             df['total_transaction_counts'] = 1
             df['Avg. Listing Price'] = f"${float(df['Price'].iloc[0]):,.2f}" if not df.empty and pd.notna(df['Price'].iloc[0]) else ""
 
-        if brokerage_filter:
-            df = df[df["Brokerage"].str.lower().str.contains(brokerage_filter, na=False)]
-        if agent_first_filter:
-            df = df[df["Agent First"].str.lower().str.contains(agent_first_filter, na=False)]
-        if agent_last_filter:
-            df = df[df["Agent Last"].str.lower().str.contains(agent_last_filter, na=False)]
-
         if offset == 0:
             st.session_state.filtered_transactions_data = df
         else:
@@ -236,7 +271,10 @@ def transactions_view():
             states=selected_states,
             statuses=selected_statuses,
             price_min=min_price,
-            price_max=max_price
+            price_max=max_price,
+            agent_first=agent_first_filter if agent_first_filter else None,
+            agent_last=agent_last_filter if agent_last_filter else None,
+            brokerage=brokerage_filter if brokerage_filter else None
         )
         st.session_state.load_more_requested = False
 
