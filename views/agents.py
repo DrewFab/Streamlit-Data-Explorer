@@ -1,5 +1,7 @@
 import streamlit as st
 import pandas as pd
+import os
+from config import EXPORT_PATH
 from db import run_query
 
 CACHE_LIMIT_AGENTS = 5000
@@ -115,6 +117,7 @@ def agents_view():
     st.session_state.setdefault('total_agents', 0)
     st.session_state.setdefault('selected_states_agents', us_states)
     st.session_state.setdefault('agents_filters_applied', False)
+    st.session_state.setdefault('load_more_requested', False)
 
     with st.sidebar:
         st.header("Filter Agents by Location")
@@ -180,31 +183,49 @@ def agents_view():
             st.caption(f"Showing agents {start}-{end} of {st.session_state.total_agents}")
 
         with col_dl_agents:
-            csv_data = df_agents.to_csv(index=False).encode("utf-8")
-            st.download_button(
-                label="Export Displayed Data as CSV",
-                data=csv_data,
-                file_name="filtered_agents_view.csv",
-                mime="text/csv",
-                key="download_agents_csv"
-            )
+            if len(df_agents) > 15000:
+                os.makedirs(EXPORT_PATH, exist_ok=True)
+                export_path = os.path.join(EXPORT_PATH, "filtered_agents_view.csv")
+                df_agents.to_csv(export_path, index=False)
+                with open(export_path, "rb") as f:
+                    st.download_button(
+                        label="Download Full CSV",
+                        data=f,
+                        file_name="filtered_agents_view.csv",
+                        mime="text/csv",
+                        key="download_agents_csv_large"
+                    )
+            else:
+                csv_data = df_agents.to_csv(index=False).encode("utf-8")
+                st.download_button(
+                    label="Export Displayed Data as CSV",
+                    data=csv_data,
+                    file_name="filtered_agents_view.csv",
+                    mime="text/csv",
+                    key="download_agents_csv"
+                )
 
         if end < st.session_state.total_agents:
             if st.button("Load More", key="load_more_agents"):
-                with st.spinner("Loading more agent data..."):
-                    new_agents = load_agents_data(
-                        CACHE_LIMIT_AGENTS,
-                        st.session_state.agents_offset + CACHE_LIMIT_AGENTS,
-                        st.session_state.selected_states_agents,
-                        agent_name_filter,
-                        brokerage_filter
-                    )
-                if not new_agents.empty:
-                    st.session_state.filtered_agents_data = pd.concat(
-                        [st.session_state.filtered_agents_data, new_agents], ignore_index=True
-                    )
-                    st.session_state.agents_offset += CACHE_LIMIT_AGENTS
-                    st.rerun()
+                st.session_state.load_more_requested = True
+
+        if st.session_state.load_more_requested:
+            with st.spinner("Loading more agent data..."):
+                new_agents = load_agents_data(
+                    CACHE_LIMIT_AGENTS,
+                    st.session_state.agents_offset + CACHE_LIMIT_AGENTS,
+                    st.session_state.selected_states_agents,
+                    agent_name_filter,
+                    brokerage_filter
+                )
+            if not new_agents.empty:
+                st.session_state.filtered_agents_data = pd.concat(
+                    [st.session_state.filtered_agents_data, new_agents], ignore_index=True
+                )
+                st.session_state.agents_offset += CACHE_LIMIT_AGENTS
+            st.session_state.load_more_requested = False
+            st.rerun()
+
     else:
         if st.session_state.total_agents == 0 and st.session_state.agents_filters_applied:
             st.info("No agents match the current filters.")
