@@ -2,6 +2,8 @@ import streamlit as st
 from db import run_query
 import pandas as pd
 from datetime import datetime, timedelta
+import os
+from config import EXPORT_PATH
 
 CACHE_LIMIT_TRANSACTIONS = 5000  # Set your desired page size
 
@@ -137,6 +139,7 @@ def transactions_view():
     st.session_state.setdefault('selected_statuses', default_statuses)
     st.session_state.setdefault('min_price', 0)
     st.session_state.setdefault('max_price', 99999999.0)
+    st.session_state.setdefault('load_more_requested', False)
 
     with st.sidebar:
         st.header("Filter Transactions")
@@ -146,7 +149,11 @@ def transactions_view():
         st.text_input("Agent First Name", key="filter_agent_first")
         st.text_input("Agent Last Name", key="filter_agent_last")
 
-        st.write("List Date Range: Last Week (default)")
+        start_date, end_date = st.date_input(
+            "List Date Range",
+            value=default_range,
+            key="date_range_input"
+        )
 
         select_all_states = st.checkbox("Select All States", key="select_all_states", value=True)
         if select_all_states:
@@ -171,13 +178,14 @@ def transactions_view():
                 st.session_state.total_matching_rows = 0
                 st.rerun()
 
-    if apply_filters or st.session_state.filtered_transactions_data.empty:
+    st.session_state.date_range = (start_date, end_date)
+
+    if apply_filters or st.session_state.filtered_transactions_data.empty or st.session_state.get("load_more_requested"):
         brokerage_filter = st.session_state.get("filter_brokerage", "").lower().strip()
         agent_first_filter = st.session_state.get("filter_agent_first", "").lower().strip()
         agent_last_filter = st.session_state.get("filter_agent_last", "").lower().strip()
 
-        st.session_state.transactions_offset = 0
-        st.session_state.date_range = default_range
+        offset = st.session_state.transactions_offset
         st.session_state.selected_states = selected_states
         st.session_state.selected_statuses = selected_statuses
         st.session_state.min_price = min_price
@@ -185,15 +193,14 @@ def transactions_view():
 
         df = load_transactions_data(
             limit=CACHE_LIMIT_TRANSACTIONS,
-            offset=0,
-            date_range=default_range,
+            offset=offset,
+            date_range=st.session_state.date_range,
             states=selected_states,
             statuses=selected_statuses,
             price_min=min_price,
             price_max=max_price
         )
 
-        # Add computed metrics
         if 'listing_agent_id' in df.columns:
             df['Price'] = df['Price'].astype(str)
             df['Price Numeric'] = df['Price'].str.replace(r'[\$,]', '', regex=True).astype(float)
@@ -216,17 +223,25 @@ def transactions_view():
         if agent_last_filter:
             df = df[df["Agent Last"].str.lower().str.contains(agent_last_filter, na=False)]
 
-        st.session_state.filtered_transactions_data = df
+        if offset == 0:
+            st.session_state.filtered_transactions_data = df
+        else:
+            st.session_state.filtered_transactions_data = pd.concat(
+                [st.session_state.filtered_transactions_data, df], ignore_index=True
+            )
+
+        st.session_state.transactions_offset += CACHE_LIMIT_TRANSACTIONS
         st.session_state.total_matching_rows = get_total_matching_rows(
-            date_range=default_range,
+            date_range=st.session_state.date_range,
             states=selected_states,
             statuses=selected_statuses,
             price_min=min_price,
             price_max=max_price
         )
+        st.session_state.load_more_requested = False
 
     df_display = st.session_state.filtered_transactions_data.iloc[
-                 st.session_state.transactions_offset: st.session_state.transactions_offset + CACHE_LIMIT_TRANSACTIONS
+                 0: st.session_state.transactions_offset
                  ]
 
     if 'total_transaction_counts' not in df_display.columns:
@@ -254,25 +269,44 @@ def transactions_view():
         else:
             df_display['Avg. Listing Price'] = f"${float(df_display['Price'].iloc[0]):,.2f}" if not df_display.empty and pd.notna(df_display['Price'].iloc[0]) else ""
 
-    if not df_display.empty:
+    if not st.session_state.filtered_transactions_data.empty:
         df_display["Price"] = df_display["Price"].apply(format_price)
         st.dataframe(df_display[['Email', 'Agent First', 'Agent Last', 'Brokerage', 'List Date', 'Status', 'Price', 'Address 1', 'Address 2', 'City', 'State', 'Zip', 'SQFT', 'Phone', 'Agent MLS ID', 'Office ID', 'total_transaction_counts', 'Avg. Listing Price']], use_container_width=True)
 
         col_dl = st.columns([1])
         with col_dl[0]:
-            csv_data = df_display.to_csv(index=False).encode('utf-8')
-            st.download_button(label="Export Displayed Data as CSV", data=csv_data,
-                               file_name="filtered_transactions.csv", mime="text/csv")
+            if len(df_display) > 15000:
+                os.makedirs(EXPORT_PATH, exist_ok=True)
+                export_path = os.path.join(EXPORT_PATH, "filtered_transactions.csv")
+                df_display.to_csv(export_path, index=False)
+                with open(export_path, "rb") as f:
+                    st.download_button(
+                        label="Download Full CSV",
+                        data=f,
+                        file_name="filtered_transactions.csv",
+                        mime="text/csv",
+                        key="download_transactions_csv_large"
+                    )
+            else:
+                csv_data = df_display.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="Export Displayed Data as CSV",
+                    data=csv_data,
+                    file_name="filtered_transactions.csv",
+                    mime="text/csv",
+                    key="download_transactions_csv"
+                )
 
         st.metric("Rows Displayed", len(df_display))
         st.metric("Total Rows Matching Filters", st.session_state.total_matching_rows)
-        st.caption(f"Showing rows {st.session_state.transactions_offset + 1} – "
-                   f"{st.session_state.transactions_offset + len(df_display)} of "
+        st.caption(f"Showing rows 1 – "
+                   f"{len(df_display)} of "
                    f"{st.session_state.total_matching_rows}")
 
         if st.session_state.total_matching_rows > len(df_display):
-            if st.button("Load More"):
-                st.session_state.transactions_offset += CACHE_LIMIT_TRANSACTIONS
+            st.button("Load More", key="load_more_button")
+            if st.session_state.load_more_requested:
+                st.session_state.load_more_requested = False
                 st.rerun()
     else:
         st.info("No transactions match the current filters.")
