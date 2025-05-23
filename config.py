@@ -12,3 +12,5 @@ DB_CONFIG = {
     "user": os.getenv("DB_USER"),
     "password": os.getenv("DB_PASSWORD")
 }
+
+EXPORT_PATH = os.getenv("EXPORT_PATH", "exports/")
