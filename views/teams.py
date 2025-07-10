@@ -15,6 +15,10 @@ DB_COL_TOTAL_SALES = '"Total Sales"'
 DB_COL_SALES_LASTYEAR_TEAMS = '"Sales 12 Mo."'
 DB_COL_AVG_SALE_TEAMS = '"Avg. Sale"'
 DB_COL_MEMBERS_LIST = '"Members"'
+DB_COL_TEAM_EMAIL = '"Email"'
+DB_COL_TEAM_PHONE = '"Cell"'
+DB_COL_ZIP = '"Zip"'
+DB_COL_CITY = '"City"' # Added DB column for City
 DB_TABLE_TEAMS = '"z_agents"'  # Assuming the same table for now, adjust if needed
 
 # --- DataFrame Column Names for Teams ---
@@ -29,6 +33,8 @@ DF_COL_AVG_SALE_TEAMS = 'Avg. Sale'
 DF_COL_MEMBERS_LIST = 'Members'
 DF_COL_TEAM_EMAIL = 'Email'
 DF_COL_TEAM_PHONE = 'Phone'
+DF_COL_ZIP = 'Zip'
+DF_COL_CITY = 'City' # Added DF column for City
 
 # --- Display Column Names for Teams ---
 DISPLAY_COL_TEAM_NAME = 'Team Name'
@@ -42,6 +48,8 @@ DISPLAY_COL_AVG_SALE_TEAMS = 'Avg. Sale'
 DISPLAY_COL_MEMBERS_LIST = 'Members'
 DISPLAY_COL_TEAM_EMAIL = 'Team Leader Email'
 DISPLAY_COL_TEAM_PHONE = 'Team Leader Cell'
+DISPLAY_COL_ZIP = 'Zip'
+DISPLAY_COL_CITY = 'City' # Added Display column for City
 
 
 def get_total_team_count(states=None):
@@ -185,15 +193,17 @@ def load_team_data(limit=CACHE_LIMIT_TEAMS, offset=0, states=None):
         lead."sales_lastyear" AS "{DF_COL_SALES_LASTYEAR_TEAMS}",
         lead."averageValueThreeYear" AS "{DF_COL_AVG_SALE_TEAMS}",
         REPLACE(lead."Team_member_name(cut by ^)", '^', '; ') AS "{DF_COL_MEMBERS_LIST}",
-        lead."Email" AS "Email",
-        lead."Cell" AS "Phone"
+        lead."Email" AS "{DF_COL_TEAM_EMAIL}",
+        lead."Cell" AS "{DF_COL_TEAM_PHONE}",
+        lead."Zip" AS "{DF_COL_ZIP}",
+        lead."City" AS "{DF_COL_CITY}"  -- Added City to the SELECT statement
     FROM {DB_TABLE_TEAMS} AS lead
     JOIN {DB_TABLE_TEAMS} AS team_records
         ON lead."Team_encodedZuid" = team_records."Team_encodedZuid"
     WHERE {where_clause}
     GROUP BY lead."Team", lead."Name", lead."Team_encodedZuid", lead."Org", lead."State",
              lead."sales", lead."sales_lastyear", lead."averageValueThreeYear",
-             lead."Team_member_name(cut by ^)", lead."Email", lead."Cell"
+             lead."Team_member_name(cut by ^)", lead."Email", lead."Cell", lead."Zip", lead."City" -- Added City to GROUP BY
     ORDER BY lead."State" ASC
     LIMIT %(limit)s OFFSET %(offset)s;
     """
@@ -221,18 +231,17 @@ def teams_view():
     st.title("Teams View")
 
     us_states = ['AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
-                 'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD',
-                 'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ',
-                 'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC',
-                 'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY']
+                  'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD',
+                  'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ',
+                  'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC',
+                  'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY']
     st.session_state.setdefault('selected_states_teams', us_states)
 
     # Initialize session state variables safely for teams view.
-    # Note: Using a different key for our flag than the widget key.
     st.session_state.setdefault('teams_offset', 0)
     st.session_state.setdefault('filtered_teams_data', pd.DataFrame())
     st.session_state.setdefault('total_teams', 0)
-    st.session_state.setdefault('teams_filters_applied', False)  # Renamed flag
+    st.session_state.setdefault('teams_filters_applied', False)
     st.session_state.setdefault('load_more_requested', False)
 
     if st.session_state.get('authenticated', False):
@@ -254,10 +263,9 @@ def teams_view():
 
             # Team Name filter
             st.text_input("Team Name", key="filter_team_name")
-            # Team Lead Name filter (ensure visible and immediately after Team Name)
+            # Team Lead Name filter
             st.text_input("Team Lead Name", key="filter_team_lead_name")
 
-            # Use a unique key for the button to avoid conflicts with session_state flag
             col1, col2 = st.columns(2)
             with col1:
                 apply_filters_btn = st.button("Apply Filters", key="apply_filters_btn")
@@ -327,10 +335,15 @@ def teams_view():
                 )
 
             # --- Rename columns for display ---
-            if 'Email' in df_teams_display.columns:
-                df_teams_display[DISPLAY_COL_TEAM_EMAIL] = df_teams_display.pop('Email')
-            if 'Phone' in df_teams_display.columns:
-                df_teams_display[DISPLAY_COL_TEAM_PHONE] = df_teams_display.pop('Phone')
+            if DF_COL_TEAM_EMAIL in df_teams_display.columns:
+                df_teams_display[DISPLAY_COL_TEAM_EMAIL] = df_teams_display.pop(DF_COL_TEAM_EMAIL)
+            if DF_COL_TEAM_PHONE in df_teams_display.columns:
+                df_teams_display[DISPLAY_COL_TEAM_PHONE] = df_teams_display.pop(DF_COL_TEAM_PHONE)
+            if DF_COL_ZIP in df_teams_display.columns:
+                df_teams_display[DISPLAY_COL_ZIP] = df_teams_display.pop(DF_COL_ZIP)
+            if DF_COL_CITY in df_teams_display.columns: # Renaming City for display
+                df_teams_display[DISPLAY_COL_CITY] = df_teams_display.pop(DF_COL_CITY)
+
 
             # --- Define Columns for Display ---
             columns_to_display_teams = [
@@ -339,6 +352,8 @@ def teams_view():
                 DISPLAY_COL_TEAM_MEMBERS_COUNT,
                 DISPLAY_COL_BROKERAGE,
                 DISPLAY_COL_STATE_TEAMS,
+                DISPLAY_COL_CITY, # Added City to the display columns
+                DISPLAY_COL_ZIP,
                 DISPLAY_COL_TOTAL_SALES,
                 DISPLAY_COL_SALES_LASTYEAR_TEAMS,
                 DISPLAY_COL_AVG_SALE_TEAMS,
