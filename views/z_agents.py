@@ -413,7 +413,7 @@ def z_agents_view():
             # --- Define Columns for Display ---
             columns_to_display_in_table = [
                 "Name", "Team", "Team_role", "Org",
-                "Phone", "Cell", "Email", "City, "State", "Zip",
+                "Phone", "Cell", "Email", "City", "State", "Zip",
                 DISPLAY_COL_SALES_NUMBER,
                 DISPLAY_COL_SALES_VALUE,
                 "3 Year Min",
