@@ -39,7 +39,7 @@ def load_agents_data(limit=CACHE_LIMIT_AGENTS, offset=0, states=None, agent_name
         where_clauses.append('sales_25 >= %(sales_25_min)s')
         params['sales_25_min'] = sales_25_min
 
-    if sales_25_max is not None:
+    if sales_25_max is not None and sales_25_max < 999999:
         where_clauses.append('sales_25 <= %(sales_25_max)s')
         params['sales_25_max'] = sales_25_max
 
@@ -47,7 +47,8 @@ def load_agents_data(limit=CACHE_LIMIT_AGENTS, offset=0, states=None, agent_name
         where_clauses.append('volume_25 >= %(volume_25_min)s')
         params['volume_25_min'] = volume_25_min
 
-    if volume_25_max is not None:
+    # Only apply upper bound if volume_25_max is below a very high cap (e.g., 999,999,999)
+    if volume_25_max is not None and volume_25_max < 999999999:
         where_clauses.append('volume_25 <= %(volume_25_max)s')
         params['volume_25_max'] = volume_25_max
 
@@ -122,7 +123,7 @@ def load_all_agents_data(states=None, agent_name_filter=None, brokerage_filter=N
         where_clauses.append('sales_25 >= %(sales_25_min)s')
         params['sales_25_min'] = sales_25_min
 
-    if sales_25_max is not None:
+    if sales_25_max is not None and sales_25_max < 999999:
         where_clauses.append('sales_25 <= %(sales_25_max)s')
         params['sales_25_max'] = sales_25_max
 
@@ -130,7 +131,8 @@ def load_all_agents_data(states=None, agent_name_filter=None, brokerage_filter=N
         where_clauses.append('volume_25 >= %(volume_25_min)s')
         params['volume_25_min'] = volume_25_min
 
-    if volume_25_max is not None:
+    # Only apply upper bound if volume_25_max is below a very high cap (e.g., 999,999,999)
+    if volume_25_max is not None and volume_25_max < 999999999:
         where_clauses.append('volume_25 <= %(volume_25_max)s')
         params['volume_25_max'] = volume_25_max
 
@@ -204,7 +206,7 @@ def get_total_agents_count(states=None, agent_name_filter=None, brokerage_filter
         where_clauses.append('sales_25 >= %(sales_25_min)s')
         params['sales_25_min'] = sales_25_min
 
-    if sales_25_max is not None:
+    if sales_25_max is not None and sales_25_max < 999999:
         where_clauses.append('sales_25 <= %(sales_25_max)s')
         params['sales_25_max'] = sales_25_max
 
@@ -212,7 +214,8 @@ def get_total_agents_count(states=None, agent_name_filter=None, brokerage_filter
         where_clauses.append('volume_25 >= %(volume_25_min)s')
         params['volume_25_min'] = volume_25_min
 
-    if volume_25_max is not None:
+    # Only apply upper bound if volume_25_max is below a very high cap (e.g., 999,999,999)
+    if volume_25_max is not None and volume_25_max < 999999999:
         where_clauses.append('volume_25 <= %(volume_25_max)s')
         params['volume_25_max'] = volume_25_max
 
@@ -369,6 +372,28 @@ def agents_view():
             st.info("Apply filters using the sidebar to load agent data.")
 
 
+def format_dollars_slider(val):
+    """Format a dollar amount for slider labels, using K/M suffixes."""
+    try:
+        if val >= 1_000_000:
+            # Show as $1.2M, no trailing .0
+            val_m = val / 1_000_000
+            if val % 1_000_000 == 0:
+                return f"${int(val_m)}M"
+            else:
+                return f"${val_m:.1f}M"
+        elif val >= 1_000:
+            val_k = val / 1_000
+            if val % 1_000 == 0:
+                return f"${int(val_k)}K"
+            else:
+                return f"${val_k:.1f}K"
+        else:
+            return f"${val}"
+    except Exception:
+        return str(val)
+
+
 def active_agents_view():
     st.title("Active Agents")
 
@@ -387,15 +412,59 @@ def active_agents_view():
     st.session_state.setdefault('filter_association', "")
     st.session_state.setdefault('filter_state', "All")
     st.session_state.setdefault('filter_team', "")
-    st.session_state.setdefault('sales_25_range', (0, 100000))
-    st.session_state.setdefault('volume_25_range', (0.0, 100000000.0))
+    st.session_state.setdefault('sales_25_min', 0)
+    st.session_state.setdefault('sales_25_max', 2000)
+    st.session_state.setdefault('volume_25_min', 0)
+    st.session_state.setdefault('volume_25_max', 1000000000)
 
     with st.sidebar:
         st.selectbox("State", ["All"] + us_states, key="filter_state")
         st.text_input("Broker Filter", key="filter_brokerage")
         st.text_input("Team Filter", key="filter_team")
-        st.slider("Sales 2025 Range", min_value=0, max_value=100000, value=(0, 100000), step=100, key="sales_25_range")
-        st.slider("Volume 2025 Range", min_value=0.0, max_value=100000000.0, value=(0.0, 100000000.0), step=10000.0, key="volume_25_range")
+
+        # Sales 2025 Range: two number inputs in one row
+        st.markdown("**Sales 2025 Range**")
+        sales_col1, sales_col2 = st.columns(2)
+        with sales_col1:
+            sales_25_min = st.number_input(
+                "Min Sales 2025",
+                min_value=0,
+                max_value=2000,
+                value=st.session_state.get("sales_25_min", 0),
+                step=1,
+                key="sales_25_min"
+            )
+        with sales_col2:
+            sales_25_max = st.number_input(
+                "Max Sales 2025",
+                min_value=0,
+                max_value=2000,
+                value=st.session_state.get("sales_25_max", 2000),
+                step=1,
+                key="sales_25_max"
+            )
+
+        # Volume 2025 Range: two number inputs in one row
+        st.markdown("**Volume 2025 Range**")
+        volume_col1, volume_col2 = st.columns(2)
+        with volume_col1:
+            volume_25_min = st.number_input(
+                "Min Volume 2025",
+                min_value=0,
+                max_value=1_000_000_000,
+                value=st.session_state.get("volume_25_min", 0),
+                step=50000,
+                key="volume_25_min"
+            )
+        with volume_col2:
+            volume_25_max = st.number_input(
+                "Max Volume 2025",
+                min_value=0,
+                max_value=1_000_000_000,
+                value=st.session_state.get("volume_25_max", 1_000_000_000),
+                step=50000,
+                key="volume_25_max"
+            )
 
     # Retrieve filters from session state
     agent_name_filter = st.session_state.get("filter_agent", "").strip().lower()
@@ -405,66 +474,118 @@ def active_agents_view():
     # If "All" is selected, do not filter by state; else, use the value
     state_filter = "" if state_value == "All" else state_value.lower()
     team_filter = st.session_state.get("filter_team", "").strip().lower()
-    # Unpack slider ranges
-    sales_25_min, sales_25_max = st.session_state.get("sales_25_range", (0, 1000))
-    volume_25_min, volume_25_max = st.session_state.get("volume_25_range", (0.0, 1000000.0))
+    # Get min/max values from session state (set by number_input above)
+    sales_25_min = st.session_state.get("sales_25_min", 0)
+    sales_25_max = st.session_state.get("sales_25_max", 2000)
+    volume_25_min = st.session_state.get("volume_25_min", 0)
+    volume_25_max = st.session_state.get("volume_25_max", 1000000000)
 
-    # Load limited data for display
-    with st.spinner("Loading active agents data..."):
-        df_agents_limited = load_agents_data(
-            limit=CACHE_LIMIT_AGENTS,
-            offset=0,
-            states=None,  # states param removed
-            agent_name_filter=agent_name_filter,
-            brokerage_filter=brokerage_filter,
-            state_filter=state_filter,
-            team_filter=team_filter,
-            sales_25_min=sales_25_min,
-            sales_25_max=sales_25_max,
-            volume_25_min=volume_25_min,
-            volume_25_max=volume_25_max
-        )
+    # --- Session state for incremental loading ---
+    st.session_state.setdefault('active_agents_offset', 0)
+    st.session_state.setdefault('active_agents_data', pd.DataFrame())
+    st.session_state.setdefault('active_agents_total', 0)
+    st.session_state.setdefault('active_agents_filters_applied', False)
+    st.session_state.setdefault('active_agents_last_filters', {})
 
-        # For full export, use same filter logic as in load_agents_data, but no limit/offset
-        df_agents_full = load_all_agents_data(
-            states=None,
-            agent_name_filter=agent_name_filter,
-            brokerage_filter=brokerage_filter,
-            state_filter=state_filter,
-            team_filter=team_filter,
-            sales_25_min=sales_25_min,
-            sales_25_max=sales_25_max,
-            volume_25_min=volume_25_min,
-            volume_25_max=volume_25_max
-        )
+    # Compose current filters as a dict for comparison
+    current_filters = {
+        "agent_name_filter": agent_name_filter,
+        "brokerage_filter": brokerage_filter,
+        "association_filter": association_filter,
+        "state_filter": state_filter,
+        "team_filter": team_filter,
+        "sales_25_min": sales_25_min,
+        "sales_25_max": sales_25_max,
+        "volume_25_min": volume_25_min,
+        "volume_25_max": volume_25_max,
+    }
 
-        total_agents = len(df_agents_full)
+    # Detect if filters have changed
+    filters_changed = current_filters != st.session_state.get('active_agents_last_filters', {})
+
+    if filters_changed or not st.session_state['active_agents_filters_applied']:
+        # Reset offset and data, and record filters
+        st.session_state['active_agents_offset'] = 0
+        st.session_state['active_agents_filters_applied'] = True
+        st.session_state['active_agents_last_filters'] = current_filters.copy()
+        with st.spinner("Calculating total active agents..."):
+            st.session_state['active_agents_total'] = get_total_agents_count(
+                states=None,
+                agent_name_filter=agent_name_filter,
+                brokerage_filter=brokerage_filter,
+                state_filter=state_filter,
+                team_filter=team_filter,
+                sales_25_min=sales_25_min,
+                sales_25_max=sales_25_max,
+                volume_25_min=volume_25_min,
+                volume_25_max=volume_25_max
+            )
+        if st.session_state['active_agents_total'] > 0:
+            with st.spinner("Loading active agents data..."):
+                df_first = load_agents_data(
+                    limit=CACHE_LIMIT_AGENTS,
+                    offset=0,
+                    states=None,
+                    agent_name_filter=agent_name_filter,
+                    brokerage_filter=brokerage_filter,
+                    state_filter=state_filter,
+                    team_filter=team_filter,
+                    sales_25_min=sales_25_min,
+                    sales_25_max=sales_25_max,
+                    volume_25_min=volume_25_min,
+                    volume_25_max=volume_25_max
+                )
+                st.session_state['active_agents_data'] = df_first
+        else:
+            st.session_state['active_agents_data'] = pd.DataFrame()
+        # On filter change, rerun to update UI
+        st.rerun()
+
+    df_agents_display = st.session_state['active_agents_data']
+    total_agents = st.session_state['active_agents_total']
+    offset = st.session_state['active_agents_offset']
 
     # Format the volume_24 and volume_25 columns for display, if present
     def dollar_fmt(val):
         try:
-            return f"${val:,.0f}"
+            return _fmt_compact_dollars(val)
         except Exception:
             return val
 
-    df_agents_limited_display = df_agents_limited.copy()
+    df_agents_display_fmt = df_agents_display.copy()
     for col in ["volume_24", "volume_25"]:
-        if col in df_agents_limited_display.columns:
-            df_agents_limited_display[col] = df_agents_limited_display[col].apply(dollar_fmt)
+        if col in df_agents_display_fmt.columns:
+            df_agents_display_fmt[col] = df_agents_display_fmt[col].apply(dollar_fmt)
 
-    if not df_agents_limited.empty:
-        st.dataframe(df_agents_limited_display, use_container_width=True, hide_index=True)
+    if not df_agents_display.empty:
+        st.dataframe(df_agents_display_fmt, use_container_width=True, hide_index=True)
 
         col_metric_agents, col_dl_agents = st.columns([2, 1])
         with col_metric_agents:
-            st.metric("Rows Displayed", len(df_agents_limited))
+            st.metric("Rows Displayed", len(df_agents_display))
             st.metric("Total Rows Matching Filters", total_agents)
-            st.caption(f"Showing {len(df_agents_limited)} of {total_agents} active agents")
+            # Show "Showing X-Y of Z" (offset is 0-based, len is number displayed)
+            start = 1
+            end = len(df_agents_display)
+            st.caption(f"Showing agents {start}-{end} of {total_agents}")
 
         with col_dl_agents:
+            # For export, always export all rows matching filters
             if total_agents > 15000:
                 os.makedirs(EXPORT_PATH, exist_ok=True)
                 export_path = os.path.join(EXPORT_PATH, "active_agents_view_full.csv")
+                # Use load_all_agents_data for full export
+                df_agents_full = load_all_agents_data(
+                    states=None,
+                    agent_name_filter=agent_name_filter,
+                    brokerage_filter=brokerage_filter,
+                    state_filter=state_filter,
+                    team_filter=team_filter,
+                    sales_25_min=sales_25_min,
+                    sales_25_max=sales_25_max,
+                    volume_25_min=volume_25_min,
+                    volume_25_max=volume_25_max
+                )
                 df_agents_full.to_csv(export_path, index=False)
                 with open(export_path, "rb") as f:
                     st.download_button(
@@ -475,6 +596,18 @@ def active_agents_view():
                         key="download_active_agents_csv_large"
                     )
             else:
+                # Use load_all_agents_data for full export
+                df_agents_full = load_all_agents_data(
+                    states=None,
+                    agent_name_filter=agent_name_filter,
+                    brokerage_filter=brokerage_filter,
+                    state_filter=state_filter,
+                    team_filter=team_filter,
+                    sales_25_min=sales_25_min,
+                    sales_25_max=sales_25_max,
+                    volume_25_min=volume_25_min,
+                    volume_25_max=volume_25_max
+                )
                 csv_data = df_agents_full.to_csv(index=False).encode("utf-8")
                 st.download_button(
                     label="Export Full Data as CSV",
@@ -483,5 +616,31 @@ def active_agents_view():
                     mime="text/csv",
                     key="download_active_agents_csv"
                 )
+
+        # "Load More" button for incremental loading
+        if len(df_agents_display) < total_agents:
+            if st.button("Load More", key="load_more_active_agents"):
+                with st.spinner("Loading more active agents..."):
+                    next_offset = st.session_state['active_agents_offset'] + CACHE_LIMIT_AGENTS
+                    new_agents = load_agents_data(
+                        limit=CACHE_LIMIT_AGENTS,
+                        offset=next_offset,
+                        states=None,
+                        agent_name_filter=agent_name_filter,
+                        brokerage_filter=brokerage_filter,
+                        state_filter=state_filter,
+                        team_filter=team_filter,
+                        sales_25_min=sales_25_min,
+                        sales_25_max=sales_25_max,
+                        volume_25_min=volume_25_min,
+                        volume_25_max=volume_25_max
+                    )
+                    if not new_agents.empty:
+                        st.session_state['active_agents_data'] = pd.concat(
+                            [st.session_state['active_agents_data'], new_agents],
+                            ignore_index=True
+                        )
+                        st.session_state['active_agents_offset'] = next_offset
+                st.rerun()
     else:
         st.info("No active agents match the current filters.")
