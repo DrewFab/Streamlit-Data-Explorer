@@ -8,6 +8,7 @@ from views.z_agents import z_agents_view
 from views.agents import agents_view
 from views.transactions import transactions_view
 from views.teams import teams_view  # Import the new teams view
+from views.active_agents import active_agents_view
 
 # Initialize session state keys used in various views
 if 'transactions_offset' not in st.session_state:
@@ -48,7 +49,7 @@ def render_sidebar():
         login()
     else:
         # Display navigation options when logged in, including Teams
-        options = ["Teams", "Team Members", "Agents", "Transactions"]
+        options = ["Teams", "Team Members", "Active Agents", "Agents", "Transactions"]
         st.session_state.selected_table = st.selectbox(
             "Table", options=options, index=options.index(st.session_state.get("selected_table", "Teams"))
         )
@@ -60,8 +61,9 @@ def render_main():
         views = {
             "Teams": teams_view,
             "Team Members": z_agents_view,
+            "Active Agents": active_agents_view,
             "Agents": agents_view,
-            "Transactions": transactions_view,
+            "Transactions": transactions_view
         }
         try:
             views.get(st.session_state.selected_table, teams_view)()
