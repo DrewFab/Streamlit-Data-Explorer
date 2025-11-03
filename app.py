@@ -7,8 +7,8 @@ from auth import login, logout, is_authenticated
 from views.z_agents import z_agents_view
 from views.agents import agents_view
 from views.transactions import transactions_view
-from views.teams import teams_view  # Import the new teams view
-from views.active_agents import active_agents_view
+from views.teams import teams_view
+from views.csuites_view import csuites_view  # Import the new C-Suites view
 
 # Initialize session state keys used in various views
 if 'transactions_offset' not in st.session_state:
@@ -19,8 +19,6 @@ if 'selected_states' not in st.session_state:
     st.session_state['selected_states'] = []
 if 'total_matching_rows' not in st.session_state:
     st.session_state['total_matching_rows'] = 0
-if 'load_more_requested' not in st.session_state:
-    st.session_state['load_more_requested'] = False
 
 # Initialize session state keys for navigation
 session_defaults = {
@@ -48,27 +46,25 @@ def render_sidebar():
     if not is_authenticated():
         login()
     else:
-        # Display navigation options when logged in, including Teams
-        options = ["Teams", "Team Members", "Active Agents", "Agents", "Transactions"]
-        st.session_state.selected_table = st.selectbox(
-            "Table", options=options, index=options.index(st.session_state.get("selected_table", "Teams"))
-        )
+        # Display navigation options when logged in, including Teams and C-Suites
+        options = ["Teams", "Team Members", "Agents", "Transactions", "C-Suites"]
+        st.session_state.selected_table = st.selectbox("Table", options=options, index=0)
         st.markdown("---")  # Spacer before filters
 
 def render_main():
     # Render the appropriate view based on the selected table if logged in.
     if is_authenticated():
-        views = {
-            "Teams": teams_view,
-            "Team Members": z_agents_view,
-            "Active Agents": active_agents_view,
-            "Agents": agents_view,
-            "Transactions": transactions_view
-        }
-        try:
-            views.get(st.session_state.selected_table, teams_view)()
-        except Exception as e:
-            st.error(f"Something went wrong loading {st.session_state.selected_table}: {e}")
+        selected_table = st.session_state.selected_table
+        if selected_table == "Teams":
+            teams_view()
+        elif selected_table == "Team Members":
+            z_agents_view()
+        elif selected_table == "Agents":
+            agents_view()
+        elif selected_table == "Transactions":
+            transactions_view()
+        elif selected_table == "C-Suites":
+            csuites_view()
     else:
         # If not authenticated, instruct the user to use the sidebar login
         st.info("Please log in using the sidebar.")
