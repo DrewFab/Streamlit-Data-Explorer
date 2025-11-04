@@ -6,16 +6,20 @@ import snowflake.connector
 from snowflake.connector import DictCursor
 from config import EXPORT_PATH
 
-def connect_snowflake() -> snowflake.connector.SnowflakeConnection:
+def connect_snowflake():
+    """Connect to Snowflake using Streamlit secrets."""
+    import streamlit as st
+    creds = st.secrets
+
     return snowflake.connector.connect(
-        user=os.getenv("SNOWFLAKE_USER"),
-        account=os.getenv("SNOWFLAKE_ACCOUNT"),
+        user=creds["SNOWFLAKE_USER"],
+        account=creds["SNOWFLAKE_ACCOUNT"],
         authenticator="oauth",
-        token=os.getenv("SNOWFLAKE_TOKEN"),
-        warehouse=os.getenv("SNOWFLAKE_WAREHOUSE"),
-        database=os.getenv("SNOWFLAKE_DATABASE"),
-        schema=os.getenv("SNOWFLAKE_SCHEMA"),
-        role=os.getenv("SNOWFLAKE_ROLE"),
+        token=creds["SNOWFLAKE_TOKEN"],
+        warehouse=creds["SNOWFLAKE_WAREHOUSE"],
+        database=creds["SNOWFLAKE_DATABASE"],
+        schema=creds["SNOWFLAKE_SCHEMA"],
+        role=creds["SNOWFLAKE_ROLE"]
     )
     
 
