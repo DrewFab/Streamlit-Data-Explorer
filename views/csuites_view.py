@@ -4,7 +4,14 @@ import os
 import re
 import snowflake.connector
 from snowflake.connector import DictCursor
-from config import EXPORT_PATH
+# Assuming config is available
+try:
+    from config import EXPORT_PATH
+except ImportError:
+    # Define a default if config isn't available for local testing
+    EXPORT_PATH = 'exports' 
+
+# --- Connection and Query Helpers ---
 
 def connect_snowflake():
     import streamlit as st
@@ -20,21 +27,6 @@ def connect_snowflake():
         role=creds["SNOWFLAKE_ROLE"],
     )
     
-
-# def get_snowflake_engine():
-#     """Creates and returns a Snowflake SQLAlchemy engine."""
-#     SF_ACCOUNT = os.getenv('SF_ACCOUNT')
-#     SF_USER = os.getenv('SF_USER')
-#     SF_WAREHOUSE = os.getenv('SF_WAREHOUSE')
-#     SF_ROLE = os.getenv('SF_ROLE')
-#     SF_PROGRAMMATIC_TOKEN = os.getenv('SF_PROGRAMMATIC_TOKEN')
-#
-#     engine = create_engine(
-#         f'snowflake://{SF_USER}:{SF_PROGRAMMATIC_TOKEN}@{SF_ACCOUNT}/SCOUT_DW/COMPCURVE'
-#         f'?warehouse={SF_WAREHOUSE}&role={SF_ROLE}'
-#     )
-#     return engine
-
 
 def run_snowflake_query(query, params=None):
     """Executes a query on Snowflake and returns a DataFrame."""
@@ -66,6 +58,8 @@ def run_snowflake_query(query, params=None):
             conn.close()
 
 
+# --- Data Loading Function (Agents Count Logic Applied) ---
+
 def load_csuites_data(
     name_filter=None, company_filter=None,
     title_filter=None, job_function_filter=None,
@@ -76,6 +70,9 @@ def load_csuites_data(
     """Loads all C-Suite data from Snowflake based on filters (no LIMIT/OFFSET)."""
     where_clauses = []
     params = {}
+    
+    # Define the default max from the Streamlit input for comparison
+    DEFAULT_MAX_AGENTS = 1_000_000
 
     if name_filter:
         where_clauses.append('(FIRST_NAME ILIKE :name_like OR LAST_NAME ILIKE :name_like)')
@@ -106,11 +103,15 @@ def load_csuites_data(
             params[key] = state
         where_clauses.append(f"COMPANY_STATE IN ({', '.join(placeholders)})")
 
-    if agents_count_min is not None:
+    # MODIFIED LOGIC: Only apply min filter if it's set above the default of 0
+    if agents_count_min is not None and agents_count_min > 0:
+        # Include NULLs if the filter is applied
         where_clauses.append('(AGENTS_COUNT >= :agents_count_min OR AGENTS_COUNT IS NULL)')
         params['agents_count_min'] = agents_count_min
 
-    if agents_count_max is not None and agents_count_max < 999999:
+    # MODIFIED LOGIC: Only apply max filter if it's set below the default max
+    if agents_count_max is not None and agents_count_max < DEFAULT_MAX_AGENTS:
+        # Include NULLs if the filter is applied
         where_clauses.append('(AGENTS_COUNT <= :agents_count_max OR AGENTS_COUNT IS NULL)')
         params['agents_count_max'] = agents_count_max
 
@@ -146,8 +147,7 @@ def load_csuites_data(
     return df
 
 
-# load_all_csuites_data is no longer needed; all logic is in load_csuites_data
-
+# --- Total Count Function (Agents Count Logic Applied) ---
 
 def get_total_csuites_count(name_filter=None, company_filter=None,
                             title_filter=None, job_function_filter=None,
@@ -156,6 +156,9 @@ def get_total_csuites_count(name_filter=None, company_filter=None,
     """Counts total number of C-Suite records matching the filters."""
     where_clauses = []
     params = {}
+    
+    # Define the default max from the Streamlit input for comparison
+    DEFAULT_MAX_AGENTS = 1_000_000
 
     if name_filter:
         where_clauses.append('(FIRST_NAME ILIKE :name_like OR LAST_NAME ILIKE :name_like)')
@@ -185,11 +188,15 @@ def get_total_csuites_count(name_filter=None, company_filter=None,
             params[key] = state
         where_clauses.append(f"COMPANY_STATE IN ({', '.join(placeholders)})")
 
-    if agents_count_min is not None:
+    # MODIFIED LOGIC: Only apply min filter if it's set above the default of 0
+    if agents_count_min is not None and agents_count_min > 0:
+        # Include NULLs if the filter is applied
         where_clauses.append('(AGENTS_COUNT >= :agents_count_min OR AGENTS_COUNT IS NULL)')
         params['agents_count_min'] = agents_count_min
 
-    if agents_count_max is not None and agents_count_max < 999999:
+    # MODIFIED LOGIC: Only apply max filter if it's set below the default max
+    if agents_count_max is not None and agents_count_max < DEFAULT_MAX_AGENTS:
+        # Include NULLs if the filter is applied
         where_clauses.append('(AGENTS_COUNT <= :agents_count_max OR AGENTS_COUNT IS NULL)')
         params['agents_count_max'] = agents_count_max
 
@@ -221,9 +228,21 @@ def get_total_csuites_count(name_filter=None, company_filter=None,
     return 0
 
 
+# --- Streamlit View Function ---
+
 def csuites_view():
     """Main view for C-Suite data from Snowflake."""
     st.title("C-Suite Executives")
+
+    # Calculate the total count of all records in the table (unfiltered)
+    # Cache this value to avoid unnecessary re-queries on every interaction
+    @st.cache_data(ttl=3600)
+    def get_all_records_count():
+        # Get count without any filters
+        return get_total_csuites_count()
+
+    total_unfiltered_count = get_all_records_count()
+    st.info(f"The total number of all C-Suite records in the database is: **{total_unfiltered_count:,}**")
 
     # Filters in sidebar
     with st.sidebar:
@@ -288,14 +307,19 @@ def csuites_view():
         )
         show_all_records = st.checkbox("Show all records (70K+)", value=False, key="show_all_records")
         st.markdown("---")
+        
+        # Agents Count Range defaults
+        DEFAULT_MIN_AGENTS = 0
+        DEFAULT_MAX_AGENTS = 1_000_000
+        
         with st.expander("Agent Count Range", expanded=False):
             agents_col1, agents_col2 = st.columns(2)
             with agents_col1:
                 agents_count_min = st.number_input(
                     "Min Agents",
                     min_value=0,
-                    max_value=1_000_000,
-                    value=st.session_state.get("agents_count_min", 0),
+                    max_value=DEFAULT_MAX_AGENTS,
+                    value=st.session_state.get("agents_count_min", DEFAULT_MIN_AGENTS),
                     step=1,
                     key="agents_count_min"
                 )
@@ -303,8 +327,8 @@ def csuites_view():
                 agents_count_max = st.number_input(
                     "Max Agents",
                     min_value=0,
-                    max_value=1_000_000,
-                    value=st.session_state.get("agents_count_max", 1_000_000),
+                    max_value=DEFAULT_MAX_AGENTS,
+                    value=st.session_state.get("agents_count_max", DEFAULT_MAX_AGENTS),
                     step=1,
                     key="agents_count_max"
                 )
@@ -318,8 +342,8 @@ def csuites_view():
         job_function_filter = None
     city_filter = st.session_state.get("filter_csuite_city", "").strip().lower()
     state_filter = st.session_state.get("filter_csuite_state", [])
-    agents_count_min = st.session_state.get("agents_count_min", 0)
-    agents_count_max = st.session_state.get("agents_count_max", 1_000_000)
+    agents_count_min = st.session_state.get("agents_count_min", DEFAULT_MIN_AGENTS)
+    agents_count_max = st.session_state.get("agents_count_max", DEFAULT_MAX_AGENTS)
     show_all_records = st.session_state.get("show_all_records", False)
 
     # Compose current filters as a dict for comparison
@@ -354,12 +378,21 @@ def csuites_view():
     else:
         df_csuites = st.session_state.get('csuites_df', pd.DataFrame())
 
-    # Calculate total count for metrics
-    total_csuites = len(df_csuites)
+    # Calculate total count for metrics using the dedicated function
+    total_csuites = get_total_csuites_count(
+        name_filter=name_filter,
+        company_filter=company_filter,
+        title_filter=title_filter,
+        job_function_filter=job_function_filter,
+        city_filter=city_filter,
+        state_filter=state_filter,
+        agents_count_min=agents_count_min,
+        agents_count_max=agents_count_max
+    )
 
     if not df_csuites.empty:
-        st.dataframe(df_csuites, use_container_width=True, hide_index=True, height=8000)
-        st.caption(f"Loaded {len(df_csuites)} records from Snowflake.")
+        st.dataframe(df_csuites, use_container_width=True, hide_index=True, height=800) # Reduced height for better visibility
+        st.caption(f"Loaded {len(df_csuites)} records from Snowflake (up to 1,000 for display, or all if checked).")
 
         col_metric_csuites, col_dl_csuites = st.columns([2, 1])
         with col_metric_csuites:
@@ -367,13 +400,27 @@ def csuites_view():
             st.metric("Total Rows Matching Filters", total_csuites)
             start = 1
             end = len(df_csuites)
-            st.caption(f"Showing records {start}-{end} of {total_csuites}")
+            st.caption(f"Showing records {start}-{end} of {total_csuites} filtered records.")
 
         with col_dl_csuites:
             if total_csuites > 15000:
                 os.makedirs(EXPORT_PATH, exist_ok=True)
                 export_path = os.path.join(EXPORT_PATH, "csuites_view_full.csv")
-                df_csuites.to_csv(export_path, index=False)
+                # To get the *full* data for download, we should re-query without LIMIT,
+                # unless show_all_records was already checked and the current df_csuites is the full set.
+                if not show_all_records:
+                    st.warning("Re-loading all records for download...")
+                    df_csuites_full = load_csuites_data(
+                        name_filter=name_filter, company_filter=company_filter,
+                        title_filter=title_filter, job_function_filter=job_function_filter,
+                        city_filter=city_filter, state_filter=state_filter,
+                        agents_count_min=agents_count_min, agents_count_max=agents_count_max,
+                        show_all_records=True # Ensure full set is loaded
+                    )
+                else:
+                    df_csuites_full = df_csuites
+
+                df_csuites_full.to_csv(export_path, index=False)
                 with open(export_path, "rb") as f:
                     st.download_button(
                         label="Download Full CSV",
