@@ -2,15 +2,13 @@ import streamlit as st
 import pandas as pd
 import os
 import re
-# from sqlalchemy import create_engine
 import snowflake.connector
 from snowflake.connector import DictCursor
 from config import EXPORT_PATH
 
-
 SNOWFLAKE = {
     "user": os.getenv("SNOWFLAKE_USER"),
-    "password": os.getenv("SNOWFLAKE_PASSWORD"),
+    "token": os.getenv("SNOWFLAKE_TOKEN"),
     "account": os.getenv("SNOWFLAKE_ACCOUNT"),
     "warehouse": os.getenv("SNOWFLAKE_WAREHOUSE"),
     "database": os.getenv("SNOWFLAKE_DATABASE"),
@@ -19,7 +17,6 @@ SNOWFLAKE = {
 
 def connect_snowflake() -> snowflake.connector.SnowflakeConnection:
     return snowflake.connector.connect(**SNOWFLAKE)
-
 
 # def get_snowflake_engine():
 #     """Creates and returns a Snowflake SQLAlchemy engine."""
