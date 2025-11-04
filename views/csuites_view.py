@@ -107,11 +107,11 @@ def load_csuites_data(
         where_clauses.append(f"COMPANY_STATE IN ({', '.join(placeholders)})")
 
     if agents_count_min is not None:
-        where_clauses.append('AGENTS_COUNT >= :agents_count_min')
+        where_clauses.append('(AGENTS_COUNT >= :agents_count_min OR AGENTS_COUNT IS NULL)')
         params['agents_count_min'] = agents_count_min
 
     if agents_count_max is not None and agents_count_max < 999999:
-        where_clauses.append('AGENTS_COUNT <= :agents_count_max')
+        where_clauses.append('(AGENTS_COUNT <= :agents_count_max OR AGENTS_COUNT IS NULL)')
         params['agents_count_max'] = agents_count_max
 
     where_clause = " AND ".join(where_clauses)
@@ -186,11 +186,11 @@ def get_total_csuites_count(name_filter=None, company_filter=None,
         where_clauses.append(f"COMPANY_STATE IN ({', '.join(placeholders)})")
 
     if agents_count_min is not None:
-        where_clauses.append('AGENTS_COUNT >= :agents_count_min')
+        where_clauses.append('(AGENTS_COUNT >= :agents_count_min OR AGENTS_COUNT IS NULL)')
         params['agents_count_min'] = agents_count_min
 
     if agents_count_max is not None and agents_count_max < 999999:
-        where_clauses.append('AGENTS_COUNT <= :agents_count_max')
+        where_clauses.append('(AGENTS_COUNT <= :agents_count_max OR AGENTS_COUNT IS NULL)')
         params['agents_count_max'] = agents_count_max
 
     where_clause = " AND ".join(where_clauses)
