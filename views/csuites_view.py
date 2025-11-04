@@ -6,15 +6,18 @@ import snowflake.connector
 from snowflake.connector import DictCursor
 from config import EXPORT_PATH
 
-SNOWFLAKE = {
-    "user": os.getenv("SNOWFLAKE_USER"),
-    "token": os.getenv("SNOWFLAKE_TOKEN"),
-    "account": os.getenv("SNOWFLAKE_ACCOUNT"),
-    "warehouse": os.getenv("SNOWFLAKE_WAREHOUSE"),
-    "database": os.getenv("SNOWFLAKE_DATABASE"),
-    "schema": os.getenv("SNOWFLAKE_SCHEMA"),
-}
-
+def connect_snowflake() -> snowflake.connector.SnowflakeConnection:
+    return snowflake.connector.connect(
+        user=os.getenv("SNOWFLAKE_USER"),
+        account=os.getenv("SNOWFLAKE_ACCOUNT"),
+        authenticator="oauth",
+        token=os.getenv("SNOWFLAKE_TOKEN"),
+        warehouse=os.getenv("SNOWFLAKE_WAREHOUSE"),
+        database=os.getenv("SNOWFLAKE_DATABASE"),
+        schema=os.getenv("SNOWFLAKE_SCHEMA"),
+        role=os.getenv("SNOWFLAKE_ROLE"),
+    )
+    
 def connect_snowflake() -> snowflake.connector.SnowflakeConnection:
     return snowflake.connector.connect(**SNOWFLAKE)
 
