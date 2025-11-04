@@ -18,8 +18,6 @@ def connect_snowflake() -> snowflake.connector.SnowflakeConnection:
         role=os.getenv("SNOWFLAKE_ROLE"),
     )
     
-def connect_snowflake() -> snowflake.connector.SnowflakeConnection:
-    return snowflake.connector.connect(**SNOWFLAKE)
 
 # def get_snowflake_engine():
 #     """Creates and returns a Snowflake SQLAlchemy engine."""
