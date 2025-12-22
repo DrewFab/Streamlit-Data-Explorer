@@ -266,14 +266,11 @@ def teams_view():
         with st.sidebar:
             st.header("Filter Teams by Location")
 
-            # Initialize selected states once
-            if "selected_states_teams" not in st.session_state:
-                st.session_state.selected_states_teams = us_states.copy()
-
             st.session_state.selected_states_teams = st.multiselect(
                 "State",
                 options=us_states,
-                default=st.session_state.selected_states_teams
+                default=[],
+                placeholder="Choose options"
             )
 
             clear_states = st.checkbox(
@@ -322,7 +319,7 @@ def teams_view():
                 apply_filters_btn = st.button("Apply Filters", key="apply_filters_btn")
             with col2:
                 if st.button("Clear Filters", key="clear_filters"):
-                    st.session_state.selected_states_teams = us_states
+                    st.session_state.selected_states_teams = []
                     # Remove widget keys from session_state to clear their values
                     if "filter_brokerage" in st.session_state:
                         del st.session_state["filter_brokerage"]
