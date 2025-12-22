@@ -244,6 +244,96 @@ def load_team_data(limit=CACHE_LIMIT_TEAMS, offset=0, states=None):
         return pd.DataFrame()
 
 
+def load_brokerage_data(limit=CACHE_LIMIT_TEAMS, offset=0, states=None):
+    if not st.session_state.get('authenticated', False):
+        st.error("Authentication required.")
+        return pd.DataFrame()
+
+    where_clauses = [
+        'lead."Team_role" = \'Lead\'',
+        'lead."Team_encodedZuid" IS NOT NULL'
+    ]
+    params = {'limit': limit, 'offset': offset}
+
+    if states:
+        where_clauses.append('lead."State" IN %(states)s')
+        params['states'] = tuple(states)
+
+    if st.session_state.get("filter_brokerage", "").strip():
+        where_clauses.append('lead."Org" ILIKE %(brokerage)s')
+        params['brokerage'] = f"%{st.session_state.filter_brokerage.strip()}%"
+
+    exclude_raw = st.session_state.get("filter_exclude_brokerages", "").strip()
+    if exclude_raw:
+        excludes = [e.strip() for e in exclude_raw.split(",") if e.strip()]
+        for i, excl in enumerate(excludes):
+            where_clauses.append(f'lead."Org" NOT ILIKE %(exclude_brokerage_{i})s')
+            params[f'exclude_brokerage_{i}'] = f"%{excl}%"
+
+    where_clause = " AND ".join(where_clauses)
+
+    query = f"""
+    WITH team_rollup AS (
+        SELECT
+            UPPER(TRIM(lead."Org")) AS brokerage_key,
+            MAX(TRIM(lead."Org")) AS brokerage_display,
+            lead."Team_encodedZuid" AS team_id,
+
+            MAX(lead."Name") AS team_lead,
+            COUNT(DISTINCT team_records."Name") AS team_members,
+
+            lead."State" AS state,
+            lead."City" AS city,
+            lead."Zip" AS zip,
+
+            MAX(lead."sales") AS total_sales,
+            MAX(lead."sales_lastyear") AS sales_12_mo,
+            MAX(lead."averageValueThreeYear") AS avg_sale,
+
+            team_records."Name" AS member_name,
+            MAX(lead."Email") AS team_lead_email
+        FROM {DB_TABLE_TEAMS} AS lead
+        JOIN {DB_TABLE_TEAMS} AS team_records
+            ON lead."Team_encodedZuid" = team_records."Team_encodedZuid"
+        WHERE {where_clause}
+        GROUP BY
+            UPPER(TRIM(lead."Org")),
+            lead."Team_encodedZuid",
+            lead."State",
+            lead."City",
+            lead."Zip",
+            team_records."Name"
+    )
+    SELECT
+        MAX(brokerage_display) AS "Brokerage",
+        COUNT(DISTINCT team_id) AS "Teams",
+        STRING_AGG(DISTINCT team_lead, ', ') AS "Team Leads",
+        STRING_AGG(DISTINCT team_lead_email, ', ') AS "Team Lead Emails",
+        COUNT(DISTINCT member_name) AS "Team Members",
+
+        STRING_AGG(DISTINCT state, ', ') AS "States",
+        STRING_AGG(DISTINCT city, ', ') AS "Cities",
+        STRING_AGG(DISTINCT zip, ', ') AS "Zips",
+
+        SUM(DISTINCT total_sales) AS "Total Sales",
+        SUM(DISTINCT sales_12_mo) AS "Sales 12 Mo.",
+        AVG(DISTINCT avg_sale) AS "Avg. Sale",
+
+        STRING_AGG(DISTINCT member_name, ', ') AS "All Members"
+    FROM team_rollup
+    GROUP BY brokerage_key
+    ORDER BY "Sales 12 Mo." DESC NULLS LAST
+    LIMIT %(limit)s OFFSET %(offset)s;
+    """
+
+    try:
+        df = run_query(query, params=params)
+        return df
+    except Exception as e:
+        st.error(f"SQL Error loading brokerage data: {e}")
+        return pd.DataFrame()
+
+
 def teams_view():
     """Displays the Teams data view with filtering and pagination."""
     st.title("Teams View")
@@ -272,6 +362,21 @@ def teams_view():
                 default=[],
                 placeholder="Choose options"
             )
+
+            # --- Group by Brokerage toggle ---
+            group_by_brokerage = st.toggle(
+                "Group results by Brokerage",
+                key="group_by_brokerage",
+                help="Aggregate teams to the brokerage level to see total teams, agents, and volume per account."
+            )
+
+            # --- FORCE RESET STATE WHEN GROUPING TOGGLES ---
+            if st.session_state.get("group_by_brokerage_changed") != group_by_brokerage:
+                st.session_state.group_by_brokerage_changed = group_by_brokerage
+                st.session_state.filtered_teams_data = pd.DataFrame()
+                st.session_state.teams_offset = 0
+                st.session_state.teams_filters_applied = False
+                st.rerun()
 
             clear_states = st.checkbox(
                 "Clear",
@@ -348,12 +453,26 @@ def teams_view():
             st.session_state.teams_offset = 0
             st.session_state.teams_filters_applied = True
             print("\n--- Applying Team Filters ---")
-            with st.spinner("Calculating total teams..."):
-                st.session_state.total_teams = get_total_team_count(st.session_state.selected_states_teams)
-            if st.session_state.total_teams > 0:
+            with st.spinner("Calculating totals..."):
+                if st.session_state.get("group_by_brokerage"):
+                    st.session_state.total_teams = None
+                else:
+                    st.session_state.total_teams = get_total_team_count(st.session_state.selected_states_teams)
+            if (st.session_state.total_teams and st.session_state.total_teams > 0) or st.session_state.get("group_by_brokerage"):
                 with st.spinner("Loading team data..."):
-                    st.session_state.filtered_teams_data = load_team_data(CACHE_LIMIT_TEAMS, 0,
-                                                                          st.session_state.selected_states_teams)
+                    # --- Conditional data loader based on grouping ---
+                    if st.session_state.get("group_by_brokerage"):
+                        st.session_state.filtered_teams_data = load_brokerage_data(
+                            CACHE_LIMIT_TEAMS,
+                            0,
+                            st.session_state.selected_states_teams
+                        )
+                    else:
+                        st.session_state.filtered_teams_data = load_team_data(
+                            CACHE_LIMIT_TEAMS,
+                            0,
+                            st.session_state.selected_states_teams
+                        )
             else:
                 st.session_state.filtered_teams_data = pd.DataFrame()
             print("-----------------------------\n")
@@ -363,85 +482,110 @@ def teams_view():
         # --- Display Team Data ---
         current_team_data = st.session_state.get('filtered_teams_data', pd.DataFrame())
 
-        # --- Calculate start/end rows for teams (show actual loaded rows)
+        # Row counters for caption / metrics
         start_row_teams = 1
-        end_row_teams = len(st.session_state.filtered_teams_data)
+        end_row_teams = len(current_team_data)
 
         if not current_team_data.empty:
             df_teams_display = current_team_data.copy()
-            print(f"Columns in df_teams_display: {df_teams_display.columns.tolist()}")
 
-            # --- Format Columns for Display ---
-            if DF_COL_TOTAL_SALES in df_teams_display.columns:
-                df_teams_display[DISPLAY_COL_TOTAL_SALES] = df_teams_display[DF_COL_TOTAL_SALES].apply(
-                    lambda x: f"{x:,.0f}" if pd.notna(x) else ""
-                )
-            if DF_COL_SALES_LASTYEAR_TEAMS in df_teams_display.columns:
-                df_teams_display[DISPLAY_COL_SALES_LASTYEAR_TEAMS] = df_teams_display[
-                    DF_COL_SALES_LASTYEAR_TEAMS].apply(
-                    lambda x: f"{x:,.0f}" if pd.notna(x) else ""
-                )
-            if DF_COL_AVG_SALE_TEAMS in df_teams_display.columns:
-                df_teams_display[DISPLAY_COL_AVG_SALE_TEAMS] = df_teams_display[DF_COL_AVG_SALE_TEAMS].apply(
-                    lambda x: f"${x:,.0f}" if pd.notna(x) else ""
-                )
+            # Decide view FIRST
+            is_grouped = st.session_state.get("group_by_brokerage")
 
-            # --- Rename columns for display ---
-            if DF_COL_TEAM_EMAIL in df_teams_display.columns:
-                df_teams_display[DISPLAY_COL_TEAM_EMAIL] = df_teams_display.pop(DF_COL_TEAM_EMAIL)
-            if DF_COL_TEAM_PHONE in df_teams_display.columns:
-                df_teams_display[DISPLAY_COL_TEAM_PHONE] = df_teams_display.pop(DF_COL_TEAM_PHONE)
-            if DF_COL_ZIP in df_teams_display.columns:
-                df_teams_display[DISPLAY_COL_ZIP] = df_teams_display.pop(DF_COL_ZIP)
-            if DF_COL_CITY in df_teams_display.columns: # Renaming City for display
-                df_teams_display[DISPLAY_COL_CITY] = df_teams_display.pop(DF_COL_CITY)
+            if is_grouped:
+                # --- Brokerage Aggregated View ---
+                display_cols = [
+                    "Brokerage",
+                    "Teams",
+                    "Team Members",
+                    "Total Sales",
+                    "Sales 12 Mo.",
+                    "Avg. Sale",
+                    "Team Leads",
+                    "Team Lead Emails",
+                    "States",
+                    "Cities",
+                    "Zips",
+                    "All Members"
+                ]
+                display_cols = [c for c in display_cols if c in df_teams_display.columns]
 
-
-            # --- Define Columns for Display ---
-            columns_to_display_teams = [
-                DISPLAY_COL_TEAM_NAME,
-                DISPLAY_COL_TEAM_LEAD,
-                DISPLAY_COL_TEAM_MEMBERS_COUNT,
-                DISPLAY_COL_BROKERAGE,
-                DISPLAY_COL_STATE_TEAMS,
-                DISPLAY_COL_CITY, # Added City to the display columns
-                DISPLAY_COL_ZIP,
-                DISPLAY_COL_TOTAL_SALES,
-                DISPLAY_COL_SALES_LASTYEAR_TEAMS,
-                DISPLAY_COL_AVG_SALE_TEAMS,
-                DISPLAY_COL_MEMBERS_LIST,
-                DISPLAY_COL_TEAM_EMAIL,
-                DISPLAY_COL_TEAM_PHONE
-            ]
-            valid_columns_to_display_teams = [col for col in columns_to_display_teams if
-                                              col in df_teams_display.columns]
-
-            if not valid_columns_to_display_teams:
-                st.error("No valid team columns available to display.")
-            else:
-                # --- Display DataFrame ---
-                # Set column config to expand cell column width for Team Leader Cell
-                column_config = {
-                    DISPLAY_COL_TEAM_PHONE: st.column_config.TextColumn(
-                        label=DISPLAY_COL_TEAM_PHONE,
-                        width="large"
+                # Format numeric fields (currency vs counts)
+                if "Total Sales" in df_teams_display.columns:
+                    df_teams_display["Total Sales"] = df_teams_display["Total Sales"].apply(
+                        lambda x: f"${x:,.0f}" if pd.notna(x) else ""
                     )
-                }
-                st.dataframe(
-                    df_teams_display[valid_columns_to_display_teams],
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config=column_config
-                )
 
+                if "Avg. Sale" in df_teams_display.columns:
+                    df_teams_display["Avg. Sale"] = df_teams_display["Avg. Sale"].apply(
+                        lambda x: f"${x:,.0f}" if pd.notna(x) else ""
+                    )
+
+                if "Sales 12 Mo." in df_teams_display.columns:
+                    df_teams_display["Sales 12 Mo."] = df_teams_display["Sales 12 Mo."].apply(
+                        lambda x: f"{int(x):,}" if pd.notna(x) else ""
+                    )
+
+                # Flatten arrays for display
+                for col in ["Team Leads", "States", "Cities", "Zips", "All Members"]:
+                    if col in df_teams_display.columns:
+                        df_teams_display[col] = df_teams_display[col].apply(
+                            lambda x: ", ".join(sorted(set(x))) if isinstance(x, list) else x
+                        )
+
+            else:
+                # --- Standard Team View ---
+                display_cols = [
+                    DISPLAY_COL_TEAM_NAME,
+                    DISPLAY_COL_TEAM_LEAD,
+                    DISPLAY_COL_TEAM_MEMBERS_COUNT,
+                    DISPLAY_COL_BROKERAGE,
+                    DISPLAY_COL_STATE_TEAMS,
+                    DISPLAY_COL_CITY,
+                    DISPLAY_COL_ZIP,
+                    DISPLAY_COL_TOTAL_SALES,
+                    DISPLAY_COL_SALES_LASTYEAR_TEAMS,
+                    DISPLAY_COL_AVG_SALE_TEAMS,
+                    DISPLAY_COL_MEMBERS_LIST,
+                    DISPLAY_COL_TEAM_EMAIL,
+                    DISPLAY_COL_TEAM_PHONE
+                ]
+                display_cols = [c for c in display_cols if c in df_teams_display.columns]
+
+                # Format numeric fields
+                if DISPLAY_COL_TOTAL_SALES in df_teams_display.columns:
+                    df_teams_display[DISPLAY_COL_TOTAL_SALES] = df_teams_display[DISPLAY_COL_TOTAL_SALES].apply(
+                        lambda x: f"{x:,.0f}" if pd.notna(x) else ""
+                    )
+                if DISPLAY_COL_SALES_LASTYEAR_TEAMS in df_teams_display.columns:
+                    df_teams_display[DISPLAY_COL_SALES_LASTYEAR_TEAMS] = df_teams_display[DISPLAY_COL_SALES_LASTYEAR_TEAMS].apply(
+                        lambda x: f"{x:,.0f}" if pd.notna(x) else ""
+                    )
+                if DISPLAY_COL_AVG_SALE_TEAMS in df_teams_display.columns:
+                    df_teams_display[DISPLAY_COL_AVG_SALE_TEAMS] = df_teams_display[DISPLAY_COL_AVG_SALE_TEAMS].apply(
+                        lambda x: f"${x:,.0f}" if pd.notna(x) else ""
+                    )
+
+            # Render DataFrame
+            if display_cols:
+                st.dataframe(
+                    df_teams_display[display_cols],
+                    use_container_width=True,
+                    hide_index=True
+                )
+            else:
+                st.error("No valid columns available to display.")
             # --- Metrics and Download for Teams ---
             col_metric_teams, col_dl_teams = st.columns([2, 1])
             with col_metric_teams:
-                st.metric("Teams Displayed", len(df_teams_display))
+                if st.session_state.get("group_by_brokerage"):
+                    st.metric("Brokerages Displayed", len(df_teams_display))
+                else:
+                    st.metric("Teams Displayed", len(df_teams_display))
                 st.metric("Total Teams Matching Filters", st.session_state.total_teams)
                 st.caption(f"Showing teams {start_row_teams}-{end_row_teams} of {st.session_state.total_teams}")
             with col_dl_teams:
-                csv_data_teams = df_teams_display[valid_columns_to_display_teams].to_csv(index=False).encode('utf-8')
+                csv_data_teams = df_teams_display[display_cols].to_csv(index=False).encode('utf-8')
                 st.download_button(
                     label="Export Displayed Teams as CSV",
                     data=csv_data_teams,
@@ -451,32 +595,33 @@ def teams_view():
                 )
 
             # --- Pagination for Teams ---
-            if len(st.session_state.filtered_teams_data) < st.session_state.total_teams:
-                if st.button("Load More", key="load_more_teams"):
-                    st.session_state.load_more_requested = True
+            if not st.session_state.get("group_by_brokerage"):
+                if len(st.session_state.filtered_teams_data) < st.session_state.total_teams:
+                    if st.button("Load More", key="load_more_teams"):
+                        st.session_state.load_more_requested = True
 
-            # --- Handle Load More Logic AFTER button and BEFORE next data display ---
-            if st.session_state.get('load_more_requested', False):
-                print("\n--- Loading More Teams ---")
-                with st.spinner("Loading more team data..."):
-                    new_team_data = load_team_data(
-                        CACHE_LIMIT_TEAMS,
-                        st.session_state.teams_offset,
-                        st.session_state.selected_states_teams
-                    )
-                if not new_team_data.empty:
-                    st.session_state.filtered_teams_data = pd.concat(
-                        [st.session_state.filtered_teams_data, new_team_data], ignore_index=True
-                    )
-                    st.session_state.teams_offset += CACHE_LIMIT_TEAMS
-                    print("---------------------------\n")
-                else:
-                    st.warning("No more team data found.")
-                    print("Load More teams returned empty DataFrame unexpectedly.")
-                st.session_state.load_more_requested = False
-                st.rerun()
-            elif st.session_state.total_teams > 0 and not current_team_data.empty:
-                st.success("All matching team data loaded.")
+                # --- Handle Load More Logic AFTER button and BEFORE next data display ---
+                if st.session_state.get('load_more_requested', False):
+                    print("\n--- Loading More Teams ---")
+                    with st.spinner("Loading more team data..."):
+                        new_team_data = load_team_data(
+                            CACHE_LIMIT_TEAMS,
+                            st.session_state.teams_offset,
+                            st.session_state.selected_states_teams
+                        )
+                    if not new_team_data.empty:
+                        st.session_state.filtered_teams_data = pd.concat(
+                            [st.session_state.filtered_teams_data, new_team_data], ignore_index=True
+                        )
+                        st.session_state.teams_offset += CACHE_LIMIT_TEAMS
+                        print("---------------------------\n")
+                    else:
+                        st.warning("No more team data found.")
+                        print("Load More teams returned empty DataFrame unexpectedly.")
+                    st.session_state.load_more_requested = False
+                    st.rerun()
+                elif st.session_state.total_teams > 0 and not current_team_data.empty:
+                    st.success("All matching team data loaded.")
 
         # --- Handle No Data Scenarios for Teams ---
         elif st.session_state.total_teams == 0 and st.session_state.get('teams_filters_applied', False):
