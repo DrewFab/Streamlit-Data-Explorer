@@ -74,6 +74,14 @@ def get_total_team_count(states=None):
         where_clauses.append('lead."Org" ILIKE %(brokerage)s')
         params['brokerage'] = f"%{st.session_state.filter_brokerage.strip()}%"
 
+    # Exclude Brokerages (comma-separated)
+    exclude_raw = st.session_state.get("filter_exclude_brokerages", "").strip()
+    if exclude_raw:
+        excludes = [e.strip() for e in exclude_raw.split(",") if e.strip()]
+        for i, excl in enumerate(excludes):
+            where_clauses.append(f'lead."Org" NOT ILIKE %(exclude_brokerage_{i})s')
+            params[f'exclude_brokerage_{i}'] = f"%{excl}%"
+
     # Additional filter for Team
     if st.session_state.get("filter_team", "").strip():
         where_clauses.append('lead."Team" ILIKE %(team)s')
@@ -92,13 +100,9 @@ def get_total_team_count(states=None):
             params['sales12_min'] = sales12_range[0]
             params['sales12_max'] = sales12_range[1]
 
-    # Additional filter for Team Members (Team Size)
-    if st.session_state.get("filter_team_size"):
-        team_size_range = st.session_state.filter_team_size
-        if team_size_range != (0, 50):
-            where_clauses.append('lead."Team Members" BETWEEN %(team_size_min)s AND %(team_size_max)s')
-            params['team_size_min'] = team_size_range[0]
-            params['team_size_max'] = team_size_range[1]
+    # Set params for Team Members (Team Size) filter to be used in HAVING
+    params['team_size_min'] = st.session_state.get("filter_team_size_min", 0)
+    params['team_size_max'] = st.session_state.get("filter_team_size_max", 500)
 
     # Additional filter for Team Lead Name
     if st.session_state.get("filter_team_lead_name", "").strip():
@@ -107,9 +111,17 @@ def get_total_team_count(states=None):
 
     where_clause = " AND ".join(where_clauses)
     query = f"""
-    SELECT COUNT(DISTINCT lead."Team_encodedZuid")
-    FROM {DB_TABLE_TEAMS} AS lead
-    WHERE {where_clause};
+    SELECT COUNT(*)
+    FROM (
+        SELECT lead."Team_encodedZuid"
+        FROM {DB_TABLE_TEAMS} AS lead
+        JOIN {DB_TABLE_TEAMS} AS team_records
+            ON lead."Team_encodedZuid" = team_records."Team_encodedZuid"
+        WHERE {where_clause}
+        GROUP BY lead."Team_encodedZuid"
+        HAVING COUNT(team_records."Team_encodedZuid")
+            BETWEEN %(team_size_min)s AND %(team_size_max)s
+    ) t;
     """
 
     print("--- Teams Count Query ---")
@@ -150,6 +162,14 @@ def load_team_data(limit=CACHE_LIMIT_TEAMS, offset=0, states=None):
         where_clauses.append('lead."Org" ILIKE %(brokerage)s')
         params['brokerage'] = f"%{st.session_state.filter_brokerage.strip()}%"
 
+    # Exclude Brokerages (comma-separated)
+    exclude_raw = st.session_state.get("filter_exclude_brokerages", "").strip()
+    if exclude_raw:
+        excludes = [e.strip() for e in exclude_raw.split(",") if e.strip()]
+        for i, excl in enumerate(excludes):
+            where_clauses.append(f'lead."Org" NOT ILIKE %(exclude_brokerage_{i})s')
+            params[f'exclude_brokerage_{i}'] = f"%{excl}%"
+
     # Additional filter for Team
     if st.session_state.get("filter_team", "").strip():
         where_clauses.append('lead."Team" ILIKE %(team)s')
@@ -168,13 +188,9 @@ def load_team_data(limit=CACHE_LIMIT_TEAMS, offset=0, states=None):
             params['sales12_min'] = sales12_range[0]
             params['sales12_max'] = sales12_range[1]
 
-    # Additional filter for Team Members (Team Size)
-    if st.session_state.get("filter_team_size"):
-        team_size_range = st.session_state.filter_team_size
-        if team_size_range != (0, 50):
-            where_clauses.append('lead."Team Members" BETWEEN %(team_size_min)s AND %(team_size_max)s')
-            params['team_size_min'] = team_size_range[0]
-            params['team_size_max'] = team_size_range[1]
+    # Set params for Team Members (Team Size) filter to be used in HAVING
+    params['team_size_min'] = st.session_state.get("filter_team_size_min", 0)
+    params['team_size_max'] = st.session_state.get("filter_team_size_max", 500)
 
     # Additional filter for Team Lead Name
     if st.session_state.get("filter_team_lead_name", "").strip():
@@ -203,7 +219,9 @@ def load_team_data(limit=CACHE_LIMIT_TEAMS, offset=0, states=None):
     WHERE {where_clause}
     GROUP BY lead."Team", lead."Name", lead."Team_encodedZuid", lead."Org", lead."State",
              lead."sales", lead."sales_lastyear", lead."averageValueThreeYear",
-             lead."Team_member_name(cut by ^)", lead."Email", lead."Cell", lead."Zip", lead."City" -- Added City to GROUP BY
+             lead."Team_member_name(cut by ^)", lead."Email", lead."Cell", lead."Zip", lead."City"
+    HAVING COUNT(team_records."Team_encodedZuid")
+        BETWEEN %(team_size_min)s AND %(team_size_max)s
     ORDER BY lead."State" ASC
     LIMIT %(limit)s OFFSET %(offset)s;
     """
@@ -235,7 +253,6 @@ def teams_view():
                   'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ',
                   'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC',
                   'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY']
-    st.session_state.setdefault('selected_states_teams', us_states)
 
     # Initialize session state variables safely for teams view.
     st.session_state.setdefault('teams_offset', 0)
@@ -248,18 +265,52 @@ def teams_view():
         # --- Sidebar Filters for Teams ---
         with st.sidebar:
             st.header("Filter Teams by Location")
-            select_all_states_teams = st.checkbox("Select All States", key="select_all_states_teams", value=True)
-            if select_all_states_teams:
-                st.session_state.selected_states_teams = us_states
-            else:
-                st.session_state.selected_states_teams = st.multiselect(
-                    "State", us_states, default=st.session_state.selected_states_teams, key="state_select_teams"
-                )
+
+            # Initialize selected states once
+            if "selected_states_teams" not in st.session_state:
+                st.session_state.selected_states_teams = us_states.copy()
+
+            st.session_state.selected_states_teams = st.multiselect(
+                "State",
+                options=us_states,
+                default=st.session_state.selected_states_teams
+            )
+
+            clear_states = st.checkbox(
+                "Clear",
+                key="clear_states_teams_inline",
+                help="Clear all selected states"
+            )
+
+            if clear_states:
+                st.session_state.selected_states_teams = []
+                st.session_state.clear_states_teams_inline = False
+                st.rerun()
 
             # New filters for Brokerage, Sales 12 Mo., and Team Size
             st.text_input("Brokerage", key="filter_brokerage")
+            st.text_input(
+                "Exclude Brokerages (comma-separated)",
+                key="filter_exclude_brokerages",
+                help="Exclude teams where brokerage name matches any value (case-insensitive)."
+            )
             st.slider("Sales 12 Mo.", min_value=0, max_value=100, value=(0, 100), step=1, key="filter_sales12")
-            st.slider("Team Size", min_value=0, max_value=50, value=(0, 50), step=1, key="filter_team_size")
+            st.number_input(
+                "Min Team Size",
+                min_value=0,
+                max_value=500,
+                value=0,
+                step=1,
+                key="filter_team_size_min"
+            )
+            st.number_input(
+                "Max Team Size",
+                min_value=0,
+                max_value=500,
+                value=500,
+                step=1,
+                key="filter_team_size_max"
+            )
 
             # Team Name filter
             st.text_input("Team Name", key="filter_team_name")
@@ -283,8 +334,12 @@ def teams_view():
                         del st.session_state["filter_team_lead_name"]
                     if "filter_sales12" in st.session_state:
                         del st.session_state["filter_sales12"]
-                    if "filter_team_size" in st.session_state:
-                        del st.session_state["filter_team_size"]
+                    if "filter_team_size_min" in st.session_state:
+                        del st.session_state["filter_team_size_min"]
+                    if "filter_team_size_max" in st.session_state:
+                        del st.session_state["filter_team_size_max"]
+                    if "filter_exclude_brokerages" in st.session_state:
+                        del st.session_state["filter_exclude_brokerages"]
                     st.session_state.teams_filters_applied = False
                     st.session_state.teams_offset = 0
                     st.session_state.filtered_teams_data = pd.DataFrame()
