@@ -16,12 +16,6 @@ SNOWFLAKE = {
 }
 
 def connect_snowflake() -> snowflake.connector.SnowflakeConnection:
-    st.sidebar.write("Connecting to Snowflake with the following credentials:")
-    st.sidebar.write(f"User: {SNOWFLAKE.get('user')}")
-    st.sidebar.write(f"Account: {SNOWFLAKE.get('account')}")
-    st.sidebar.write(f"Warehouse: {SNOWFLAKE.get('warehouse')}")
-    st.sidebar.write(f"Database: {SNOWFLAKE.get('database')}")
-    st.sidebar.write(f"Schema: {SNOWFLAKE.get('schema')}")
     try:
         conn = snowflake.connector.connect(**SNOWFLAKE)
         return conn
@@ -63,7 +57,6 @@ def run_snowflake_query(query, params=None):
         else:
             cur.execute(sql)
         rows = cur.fetchall()
-        st.sidebar.write(f"Query executed successfully, fetched {len(rows)} rows.")
         # DictCursor returns list[dict] with correct column names
         df = pd.DataFrame(rows)
         return df
@@ -167,8 +160,6 @@ def load_csuites_data(
     """
 
     df = run_snowflake_query(query, params=params)
-    # Optionally, display a sidebar message confirming number of rows retrieved
-    st.sidebar.info(f"Retrieved {len(df)} rows from Snowflake.")
     return df
 
 
