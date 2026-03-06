@@ -401,7 +401,7 @@ def teams_view():
                 "Min Team Size",
                 min_value=0,
                 max_value=500,
-                value=0,
+                value=st.session_state.get("filter_team_size_min", 0),
                 step=1,
                 key="filter_team_size_min"
             )
@@ -409,7 +409,7 @@ def teams_view():
                 "Max Team Size",
                 min_value=0,
                 max_value=500,
-                value=500,
+                value=st.session_state.get("filter_team_size_max", 500),
                 step=1,
                 key="filter_team_size_max"
             )
