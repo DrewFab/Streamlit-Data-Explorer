@@ -9,6 +9,7 @@ from views.agents import agents_view
 from views.transactions import transactions_view
 from views.teams import teams_view
 from views.csuites_view import csuites_view  # Import the new C-Suites view
+from views.agent_performance_view import agent_performance_view  # Agent Performance view
 
 # Initialize session state keys used in various views
 if 'transactions_offset' not in st.session_state:
@@ -47,7 +48,7 @@ def render_sidebar():
         login()
     else:
         # Display navigation options when logged in, including Teams and C-Suites
-        options = ["Teams", "Team Members", "Agents", "Transactions", "C-Suites"]
+        options = ["Teams", "Team Members", "Agents", "Transactions", "C-Suites", "Agent Performance"]
         st.session_state.selected_table = st.selectbox("Table", options=options, index=0)
         st.markdown("---")  # Spacer before filters
 
@@ -65,6 +66,8 @@ def render_main():
             transactions_view()
         elif selected_table == "C-Suites":
             csuites_view()
+        elif selected_table == "Agent Performance":
+            agent_performance_view()
     else:
         # If not authenticated, instruct the user to use the sidebar login
         st.info("Please log in using the sidebar.")
