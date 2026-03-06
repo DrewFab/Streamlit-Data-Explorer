@@ -350,6 +350,7 @@ def teams_view():
     st.session_state.setdefault('total_teams', 0)
     st.session_state.setdefault('teams_filters_applied', False)
     st.session_state.setdefault('load_more_requested', False)
+    st.session_state.setdefault('teams_last_filters', {})
 
     if st.session_state.get('authenticated', False):
         # --- Sidebar Filters for Teams ---
@@ -446,6 +447,23 @@ def teams_view():
                     st.session_state.teams_offset = 0
                     st.session_state.filtered_teams_data = pd.DataFrame()
                     st.rerun()
+
+        # --- Auto-detect filter changes and reset so data reloads ---
+        current_filters_snapshot = {
+            "states":        tuple(st.session_state.get("selected_states_teams", [])),
+            "brokerage":     st.session_state.get("filter_brokerage", "").strip(),
+            "exclude":       st.session_state.get("filter_exclude_brokerages", "").strip(),
+            "team_name":     st.session_state.get("filter_team_name", "").strip(),
+            "team_lead":     st.session_state.get("filter_team_lead_name", "").strip(),
+            "sales12":       st.session_state.get("filter_sales12", (0, 100)),
+            "size_min":      st.session_state.get("filter_team_size_min", 0),
+            "size_max":      st.session_state.get("filter_team_size_max", 500),
+            "group_by_brok": st.session_state.get("group_by_brokerage", False),
+        }
+        if current_filters_snapshot != st.session_state['teams_last_filters']:
+            st.session_state['teams_last_filters'] = current_filters_snapshot
+            st.session_state['teams_filters_applied'] = False
+            st.session_state['teams_offset'] = 0
 
         # --- Apply Filters Logic for Teams ---
         # Automatically apply filters on first load if not already applied
