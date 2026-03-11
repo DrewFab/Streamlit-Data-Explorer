@@ -31,8 +31,8 @@ DF_COL_TOTAL_SALES = 'Total Sales'
 DF_COL_SALES_LASTYEAR_TEAMS = 'Sales 12 Mo.'
 DF_COL_AVG_SALE_TEAMS = 'Avg. Sale'
 DF_COL_MEMBERS_LIST = 'Members'
-DF_COL_TEAM_EMAIL = 'Email'
-DF_COL_TEAM_PHONE = 'Phone'
+DF_COL_TEAM_EMAIL = 'Team Leader Email'
+DF_COL_TEAM_PHONE = 'Team Leader Cell'
 DF_COL_ZIP = 'Zip'
 DF_COL_CITY = 'City' # Added DF column for City
 
