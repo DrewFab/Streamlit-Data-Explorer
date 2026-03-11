@@ -203,6 +203,7 @@ def load_agent_performance_data(
         BROKERED_BY                    AS "Broker",
         STATE                          AS "State",
         EMAIL                          AS "Email",
+        PRESENTED_BY_MOBILE            AS "Mobile",
         ROLE                           AS "Team Role",
         MEMBER_COUNT                   AS "Team Members",
         BROKERED_BY_HISTORY            AS "Brokered By History",
