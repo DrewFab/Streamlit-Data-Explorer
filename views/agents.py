@@ -47,6 +47,7 @@ def load_agents_data(limit=CACHE_LIMIT_AGENTS, offset=0, states=None, agent_name
       office_city AS "City",
       office_state AS "State",
       office_zip AS "Zip",
+      cell_phone AS "Cell Phone",
       office_phone AS "Phone",
       license_type AS "License type",
       license_number AS "License number",
